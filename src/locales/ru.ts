@@ -1,0 +1,21 @@
+// src/locales/ru.ts
+export const ru = {
+    settingsTitle: 'Настройки мода',
+    settingsSubtitle: 'Управление дополнительными функциями',
+    settingsGeneral: 'Основные',
+    settingsAppearance: 'Внешний вид',
+    settingsAbout: 'О моде',
+    hideStoriesLabel: 'Скрыть сторисы',
+    hideSferumLabel: 'Скрыть кнопку Сферума',
+    replaceTitleLabel: 'Добавить kMax в заголовок',
+    hidePhoneLabel: 'Скрыть номер телефона',
+    blockAnalyticsLabel: 'Блокировка аналитики',
+    showCrownLabel: 'Показывать корону бета-тестерам',
+    showMetadataLabel: 'Показывать кнопку Metadata для фото',
+    replaceMaxLabel: 'Заменять "Max" → "MAX"',
+    languageLabel: 'Язык',
+    languageRu: 'Русский',
+    languageEn: 'English',
+    faqTitle: 'FAQ Мода',
+    faqSubtitle: 'Часто задаваемые вопросы',
+};

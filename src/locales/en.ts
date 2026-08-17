@@ -1,0 +1,21 @@
+// src/locales/en.ts
+export const en = {
+    settingsTitle: 'Mod Settings',
+    settingsSubtitle: 'Manage additional features',
+    settingsGeneral: 'General',
+    settingsAppearance: 'Appearance',
+    settingsAbout: 'About',
+    hideStoriesLabel: 'Hide stories',
+    hideSferumLabel: 'Hide Sferum button',
+    replaceTitleLabel: 'Add kMax to title',
+    hidePhoneLabel: 'Hide phone number',
+    blockAnalyticsLabel: 'Block analytics',
+    showCrownLabel: 'Show Beta Tester crown',
+    showMetadataLabel: 'Show Metadata button for photos',
+    replaceMaxLabel: 'Replace "Max" → "MAX"',
+    languageLabel: 'Language',
+    languageRu: 'Russian',
+    languageEn: 'English',
+    faqTitle: 'Mod FAQ',
+    faqSubtitle: 'Frequently asked questions',
+};

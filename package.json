@@ -1,0 +1,30 @@
+{
+  "name": "kmax-mod",
+  "version": "1.0.0",
+  "description": "Mod for max.ru with extra features: beta tester crown, photo metadata, hiding elements and analytics blocking",
+  "main": "build/mod.user.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsx scripts/build.ts build",
+    "build:dev": "tsx scripts/build.ts dev",
+    "watch": "tsx scripts/build.ts watch",
+    "clean": "tsx scripts/build.ts clean",
+    "full": "tsx scripts/build.ts full",
+    "header": "tsx scripts/build.ts header",
+    "test": "echo \"✅ No tests yet\" && exit 0"
+  },
+  "keywords": [
+    "max-ru",
+    "userscript",
+    "tampermonkey",
+    "mod"
+  ],
+  "author": "kMax Team",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "esbuild": "^0.19.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0"
+  }
+}
