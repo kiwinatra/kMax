@@ -93,7 +93,7 @@ function createTampermonkeyHeader(): void {
     const header = `// ==UserScript==
 // @name         kMax Mod
 // @namespace    http://tampermonkey.net/
-// @version      1.6.8
+// @version      1.0.0
 // @description  Mod for max.ru
 // @author       kMax Team
 // @match        *://*.max.ru/*
