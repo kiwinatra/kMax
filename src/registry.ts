@@ -1,62 +1,32 @@
 // src/registry.ts
 import { storage } from './core/storage';
 import { logger } from './core/logger';
-import { enable as enableAnalytics, disable as disableAnalytics, toggle as toggleAnalytics } from './features/blockAnalytics';
-import { enable as enableMetadata, disable as disableMetadata, toggle as toggleMetadata, apply as applyMetadata } from './features/showMetadata';
-import { enable as enableHideStories, disable as disableHideStories, toggle as toggleHideStories, apply as applyHideStories } from './features/hideStories';
-import { enable as enableHideSferum, disable as disableHideSferum, toggle as toggleHideSferum, apply as applyHideSferum } from './features/hideSferum';
-import { enable as enableHidePhone, disable as disableHidePhone, toggle as toggleHidePhone, apply as applyHidePhone } from './features/hidePhone';
-import { enable as enableReplaceMax, disable as disableReplaceMax, toggle as toggleReplaceMax, apply as applyReplaceMax } from './features/replaceMax';
-import { enable as enableReplaceTitle, disable as disableReplaceTitle, toggle as toggleReplaceTitle, apply as applyReplaceTitle } from './features/replaceTitle';
-import { enable as enableCrown, disable as disableCrown, toggle as toggleCrown, apply as applyCrown } from './features/addCrown';
-
+import { enable as enableAnalytics, disable as disableAnalytics } from './features/blockAnalytics';
+import { enable as enableCrown, disable as disableCrown } from './features/addCrown';
+import { enable as enableMetadata, disable as disableMetadata, apply as applyMetadata } from './features/showMetadata';
+import { enable as enableHideStories, disable as disableHideStories, apply as applyHideStories } from './features/hideStories';
+import { enable as enableHideSferum, disable as disableHideSferum, apply as applyHideSferum } from './features/hideSferum';
+import { enable as enableHidePhone, disable as disableHidePhone, apply as applyHidePhone } from './features/hidePhone';
+import { enable as enableReplaceMax, disable as disableReplaceMax, apply as applyReplaceMax } from './features/replaceMax';
+import { enable as enableReplaceTitle, disable as disableReplaceTitle, apply as applyReplaceTitle } from './features/replaceTitle';
 
 export interface Feature {
     key: string;
     default: boolean;
     label: string;
-    section: 'general' | 'appearance';
+    section: 'general' | 'security' | 'appearance' | 'media' | 'other';
     apply: () => void;
     restore?: () => void;
-    toggle?: () => boolean;
 }
 
 export const FEATURES: Record<string, Feature> = {
-    blockAnalytics: {
-        key: 'blockAnalytics',
-        default: false,
-        label: 'blockAnalyticsLabel',
-        section: 'general',
-        apply: enableAnalytics,
-        restore: disableAnalytics,
-        toggle: toggleAnalytics,
-    },
-    showCrown: {
-    key: 'showCrown',
-    default: false,
-    label: 'showCrownLabel',
-    section: 'appearance',
-    apply: applyCrown,
-    restore: disableCrown,
-    toggle: toggleCrown,
-},
-    showMetadata: {
-        key: 'showMetadata',
-        default: false,
-        label: 'showMetadataLabel',
-        section: 'general',
-        apply: applyMetadata,
-        restore: disableMetadata,
-        toggle: toggleMetadata,
-    },
     hideStories: {
         key: 'hideStories',
         default: false,
         label: 'hideStoriesLabel',
-        section: 'appearance',
+        section: 'general',
         apply: applyHideStories,
         restore: disableHideStories,
-        toggle: toggleHideStories,
     },
     hideSferum: {
         key: 'hideSferum',
@@ -65,25 +35,30 @@ export const FEATURES: Record<string, Feature> = {
         section: 'general',
         apply: applyHideSferum,
         restore: disableHideSferum,
-        toggle: toggleHideSferum,
+    },
+    blockAnalytics: {
+        key: 'blockAnalytics',
+        default: false,
+        label: 'blockAnalyticsLabel',
+        section: 'security',
+        apply: enableAnalytics,
+        restore: disableAnalytics,
     },
     hidePhone: {
         key: 'hidePhone',
         default: false,
         label: 'hidePhoneLabel',
-        section: 'appearance',
+        section: 'security',
         apply: applyHidePhone,
         restore: disableHidePhone,
-        toggle: toggleHidePhone,
     },
-    replaceMax: {
-        key: 'replaceMax',
+    showCrown: {
+        key: 'showCrown',
         default: false,
-        label: 'replaceMaxLabel',
+        label: 'showCrownLabel',
         section: 'appearance',
-        apply: applyReplaceMax,
-        restore: disableReplaceMax,
-        toggle: toggleReplaceMax,
+        apply: enableCrown,
+        restore: disableCrown,
     },
     replaceTitle: {
         key: 'replaceTitle',
@@ -92,7 +67,22 @@ export const FEATURES: Record<string, Feature> = {
         section: 'appearance',
         apply: applyReplaceTitle,
         restore: disableReplaceTitle,
-        toggle: toggleReplaceTitle,
+    },
+    showMetadata: {
+        key: 'showMetadata',
+        default: false,
+        label: 'showMetadataLabel',
+        section: 'media',
+        apply: applyMetadata,
+        restore: disableMetadata,
+    },
+    replaceMax: {
+        key: 'replaceMax',
+        default: false,
+        label: 'replaceMaxLabel',
+        section: 'other',
+        apply: applyReplaceMax,
+        restore: disableReplaceMax,
     },
 };
 
@@ -104,7 +94,7 @@ export function getFeature(key: string): Feature | undefined {
     return FEATURES[key];
 }
 
-export function getFeaturesBySection(section: 'general' | 'appearance'): [string, Feature][] {
+export function getFeaturesBySection(section: string): [string, Feature][] {
     return Object.entries(FEATURES).filter(([, feature]) => feature.section === section);
 }
 
@@ -133,18 +123,22 @@ export function applyFeature(key: string): void {
     }
 }
 
+// ✅ ЕДИНАЯ ФУНКЦИЯ TOGGLE — ОНА СОХРАНЯЕТ В STORAGE
 export function toggleFeature(key: string): boolean {
     const feature = FEATURES[key];
-    if (!feature) return false;
-
-    if (feature.toggle) {
-        return feature.toggle();
+    if (!feature) {
+        logger.warn(`Feature not found: ${key}`);
+        return false;
     }
 
     const current = storage.getBoolean(key as any);
     const newState = !current;
-    storage.setBoolean(key as any, newState);
 
+    // ✅ СОХРАНЯЕМ В STORAGE
+    storage.setBoolean(key as any, newState);
+    logger.debug(`Toggle ${key}: ${current} → ${newState}`);
+
+    // Применяем или восстанавливаем
     if (newState && feature.apply) {
         feature.apply();
     } else if (feature.restore) {

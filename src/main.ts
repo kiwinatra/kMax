@@ -7,7 +7,7 @@ import { watchDOM } from './core/observer';
 import { applyAllFeatures, applyFeature, isFeatureEnabled, toggleFeature } from './registry';
 import { createVersionBadge } from './ui/versionBadge';
 import { waitForSettingsAndCreateButtons } from './ui/buttons';
-import { openSettingsModal, openFaqModal } from './ui/index';
+import { openSettingsModal } from './ui/index';
 import { FEATURES } from './registry';
 
 let initialized = false;
@@ -56,7 +56,7 @@ declare global {
             };
             ui: {
                 openSettingsModal: typeof openSettingsModal;
-                openFaqModal: typeof openFaqModal;
+                
             };
         };
     }
@@ -84,7 +84,7 @@ window.kmod = {
     },
     ui: {
         openSettingsModal,
-        openFaqModal,
+        
     },
 };
 

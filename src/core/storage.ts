@@ -1,3 +1,4 @@
+// src/core/storage.ts
 type StorageKey = 
     | 'hideStories' 
     | 'hideSferum' 
@@ -6,6 +7,7 @@ type StorageKey =
     | 'blockAnalytics' 
     | 'showCrown' 
     | 'showMetadata' 
+    | 'replaceMax'
     | 'language';
 
 interface Settings {
@@ -46,6 +48,8 @@ export const storage = {
     set<T = unknown>(key: StorageKey, value: T): void {
         try {
             localStorage.setItem(PREFIX + key, JSON.stringify(value));
+            // ✅ ЛОГ ДЛЯ ОТЛАДКИ
+            console.log(`💾 [STORAGE] Saved ${PREFIX + key} =`, value);
         } catch (error) {
             console.error('Storage set error:', error);
         }

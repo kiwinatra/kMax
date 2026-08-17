@@ -243,29 +243,43 @@ function buildMetadataHTML(metadata: any): string {
 }
 
 function findPhotoContainers(): HTMLElement[] {
-    // Пробуем основной селектор
-    let containers = qsa(OFFSETS.classes.photoContainer);
-    
-    if (containers.length > 0) {
-        return containers as HTMLElement[];
+    // Ищем все div с классом actions svelte-2k9gk6
+    const actionsElements = document.querySelectorAll('div.actions.svelte-2k9gk6');
+    const containers: HTMLElement[] = [];
+
+    for (const actions of actionsElements) {
+        // Проверяем, что внутри есть изображение
+        const img = actions.querySelector('img');
+        if (img) {
+            containers.push(actions as HTMLElement);
+        }
     }
-    
+
+    if (containers.length > 0) {
+        logger.debug(`Found ${containers.length} photo containers with actions`);
+        return containers;
+    }
+
     // Fallback: ищем любые контейнеры с изображениями
     const allImages = document.querySelectorAll('img');
     const uniqueContainers = new Set<HTMLElement>();
-    
+
     for (const img of allImages) {
         let parent = img.parentElement;
-        // Ищем родителя с классом content или похожим
-        while (parent && !parent.classList.contains('content')) {
+        while (parent && !parent.classList.contains('actions')) {
             parent = parent.parentElement;
         }
         if (parent) {
             uniqueContainers.add(parent as HTMLElement);
         }
     }
-    
-    return Array.from(uniqueContainers);
+
+    const result = Array.from(uniqueContainers);
+    if (result.length > 0) {
+        logger.debug(`Found ${result.length} containers by fallback search`);
+    }
+
+    return result;
 }
 
 function addMetadataButton(container: HTMLElement): void {
@@ -285,7 +299,9 @@ function addMetadataButton(container: HTMLElement): void {
         return;
     }
 
-    // Создаем кнопку с правильными классами (как у остальных кнопок)
+    logger.debug(`Adding metadata button for image: ${img.src.substring(0, 50)}...`);
+
+    // Создаем кнопку с правильными классами
     const button = createElement('button', {
         className: 'button button--small button--ghost svelte-15dnyr kmod-metadata-btn',
         events: {
@@ -327,13 +343,13 @@ function processPage(): void {
     // Проверяем состояние из storage
     const enabled = storage.getBoolean('showMetadata');
     if (!enabled) return;
-    
+
     const containers = findPhotoContainers();
-    
+
     if (containers.length === 0) {
         return;
     }
-    
+
     let added = 0;
     for (const container of containers) {
         if (!container.querySelector('.kmod-metadata-btn')) {
@@ -341,7 +357,7 @@ function processPage(): void {
             added++;
         }
     }
-    
+
     if (added > 0) {
         logger.debug(`Added ${added} metadata buttons`);
     }
