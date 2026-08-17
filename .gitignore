@@ -1,6 +1,6 @@
 # Dependencies
 node_modules/
-package-lock.json
+# remove package-lock.json, needed by Actions
 
 # Build output
 build/
