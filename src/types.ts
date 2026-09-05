@@ -1,4 +1,9 @@
 // src/types.ts
+
+// ============================================================
+// ОСНОВНЫЕ ТИПЫ
+// ============================================================
+
 export interface Config {
     name: string;
     version: string;
@@ -16,51 +21,134 @@ export interface Settings {
     showMetadata: boolean;
     replaceMax: boolean;
     language: 'ru' | 'en';
+    logView: boolean;
+    fontFamily: string;
 }
 
 export interface Locale {
+    // Заголовки
     settingsTitle: string;
     settingsSubtitle: string;
-    settingsGeneral: string;
-    settingsAppearance: string;
-    settingsAbout: string;
+    
+    // Секции (сайдбар)
+    sectionGeneral: string;
+    sectionSecurity: string;
+    sectionAppearance: string;
+    sectionMedia: string;
+    sectionOther: string;
+    sectionLanguage: string;
+    sectionAbout: string;
+    
+    // Описания секций
+    sectionGeneralDesc: string;
+    sectionSecurityDesc: string;
+    sectionAppearanceDesc: string;
+    sectionMediaDesc: string;
+    sectionOtherDesc: string;
+    sectionLanguageDesc: string;
+    sectionAboutDesc: string;
+    
+    // Фичи - Основные
     hideStoriesLabel: string;
+    hideStoriesDesc: string;
     hideSferumLabel: string;
-    replaceTitleLabel: string;
-    hidePhoneLabel: string;
+    hideSferumDesc: string;
+    
+    // Фичи - Безопасность
     blockAnalyticsLabel: string;
+    blockAnalyticsDesc: string;
+    hidePhoneLabel: string;
+    hidePhoneDesc: string;
+    
+    // Фичи - Внешний вид
     showCrownLabel: string;
+    showCrownDesc: string;
+    replaceTitleLabel: string;
+    replaceTitleDesc: string;
+    
+    // Фичи - Медиа
     showMetadataLabel: string;
+    showMetadataDesc: string;
+    
+    // Фичи - Другое
     replaceMaxLabel: string;
+    replaceMaxDesc: string;
+    logViewLabel: string;
+    logViewDesc: string;
+    
+    // Язык
     languageLabel: string;
     languageRu: string;
     languageEn: string;
-    faqTitle: string;
-    faqSubtitle: string;
+    
+    // О моде
+    aboutName: string;
+    aboutVersion: string;
+    aboutAuthor: string;
+    aboutDescription: string;
+    
+    // Кнопки
+    saveButton: string;
+    resetButton: string;
+    resetConfirm: string;
+    closeButton: string;
+    
+    // Статусы
+    statusActive: string;
+    statusEnabled: string;
+    statusDisabled: string;
+    
+    // Общие элементы
+    toggleOn: string;
+    toggleOff: string;
+    backToSettings: string;
 }
 
 export type LocaleKey = keyof Locale;
 export type LocaleMap = Record<string, Locale>;
+
+// ============================================================
+// UI ТИПЫ
+// ============================================================
 
 export interface ButtonOptions {
     text: string;
     icon?: string;
     className?: string;
     onClick: () => void;
+    disabled?: boolean;
+    title?: string;
 }
 
 export interface ModalOptions {
     title: string;
     content: HTMLElement | string;
     onClose?: () => void;
+    onOpen?: () => void;
     width?: string;
     minWidth?: string;
     maxWidth?: string;
+    closeOnOverlayClick?: boolean;
+    closeOnEscape?: boolean;
 }
 
-export interface ObserverCallback {
-    (): void;
+// ============================================================
+// OBSERVER ТИПЫ
+// ============================================================
+
+export type ObserverCallback = () => void;
+
+export interface ObserverOptions {
+    childList?: boolean;
+    subtree?: boolean;
+    characterData?: boolean;
+    attributes?: boolean;
+    attributeFilter?: string[];
 }
+
+// ============================================================
+// STORAGE ТИПЫ
+// ============================================================
 
 export type StorageKey = 
     | 'hideStories' 
@@ -71,4 +159,156 @@ export type StorageKey =
     | 'showCrown' 
     | 'showMetadata' 
     | 'replaceMax' 
-    | 'language';
+    | 'language'
+    | 'logView'
+    | 'fontFamily'
+    | 'chatTags'
+    | 'templates';
+
+// ============================================================
+// FEATURE ТИПЫ
+// ============================================================
+
+export type FeatureSection = 'general' | 'security' | 'appearance' | 'media' | 'other';
+
+export interface Feature {
+    key: string;
+    default: boolean;
+    label: string;
+    section: FeatureSection;
+    apply: () => void;
+    restore?: () => void;
+}
+
+export type FeatureMap = Record<string, Feature>;
+
+// ============================================================
+// DOM ТИПЫ
+// ============================================================
+
+export interface ElementOptions {
+    className?: string;
+    id?: string;
+    text?: string;
+    html?: string;
+    attrs?: Record<string, string>;
+    styles?: Partial<CSSStyleDeclaration>;
+    events?: Record<string, EventListener>;
+    dataset?: Record<string, string>;
+}
+
+export interface WaitOptions {
+    timeout?: number;
+    interval?: number;
+    throwOnTimeout?: boolean;
+}
+
+// ============================================================
+// LOGGER ТИПЫ
+// ============================================================
+
+export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+
+// ============================================================
+// ВСПОМОГАТЕЛЬНЫЕ ТИПЫ
+// ============================================================
+
+export type Nullable<T> = T | null;
+export type Optional<T> = T | undefined;
+export type Maybe<T> = T | null | undefined;
+
+export type DeepPartial<T> = {
+    [P in keyof T]?: T[P] extends object ? DeepPartial<T[P]> : T[P];
+};
+
+export type ReadonlyDeep<T> = {
+    readonly [P in keyof T]: T[P] extends object ? ReadonlyDeep<T[P]> : T[P];
+};
+
+export type ValueOf<T> = T[keyof T];
+export type KeyOf<T> = keyof T;
+
+// ============================================================
+// УТИЛИТЫ ТИПОВ
+// ============================================================
+
+/**
+ * Проверка, является ли значение ключом локали
+ */
+export function isLocaleKey(key: string): key is LocaleKey {
+    const sampleLocale: Locale = {
+        settingsTitle: '',
+        settingsSubtitle: '',
+        sectionGeneral: '',
+        sectionSecurity: '',
+        sectionAppearance: '',
+        sectionMedia: '',
+        sectionOther: '',
+        sectionLanguage: '',
+        sectionAbout: '',
+        sectionGeneralDesc: '',
+        sectionSecurityDesc: '',
+        sectionAppearanceDesc: '',
+        sectionMediaDesc: '',
+        sectionOtherDesc: '',
+        sectionLanguageDesc: '',
+        sectionAboutDesc: '',
+        hideStoriesLabel: '',
+        hideStoriesDesc: '',
+        hideSferumLabel: '',
+        hideSferumDesc: '',
+        blockAnalyticsLabel: '',
+        blockAnalyticsDesc: '',
+        hidePhoneLabel: '',
+        hidePhoneDesc: '',
+        showCrownLabel: '',
+        showCrownDesc: '',
+        replaceTitleLabel: '',
+        replaceTitleDesc: '',
+        showMetadataLabel: '',
+        showMetadataDesc: '',
+        replaceMaxLabel: '',
+        replaceMaxDesc: '',
+        logViewLabel: '',
+        logViewDesc: '',
+        languageLabel: '',
+        languageRu: '',
+        languageEn: '',
+        aboutName: '',
+        aboutVersion: '',
+        aboutAuthor: '',
+        aboutDescription: '',
+        saveButton: '',
+        resetButton: '',
+        resetConfirm: '',
+        closeButton: '',
+        statusActive: '',
+        statusEnabled: '',
+        statusDisabled: '',
+        toggleOn: '',
+        toggleOff: '',
+        backToSettings: '',
+    };
+    return key in sampleLocale;
+}
+
+/**
+ * Проверка, является ли значение ключом storage
+ */
+export function isStorageKey(key: string): key is StorageKey {
+    const storageKeys: StorageKey[] = [
+        'hideStories', 'hideSferum', 'replaceTitle', 'hidePhone',
+        'blockAnalytics', 'showCrown', 'showMetadata', 'replaceMax',
+        'language', 'logView'
+    ];
+    return storageKeys.includes(key as StorageKey);
+}
+
+// ============================================================
+// ЭКСПОРТ
+// ============================================================
+
+export default {
+    isLocaleKey,
+    isStorageKey,
+};

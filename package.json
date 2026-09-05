@@ -1,6 +1,6 @@
 {
   "name": "kmax-mod",
-  "version": "1.0.0",
+  "version": "1.3.5",
   "description": "Mod for max.ru with extra features: beta tester crown, photo metadata, hiding elements and analytics blocking",
   "main": "build/mod.user.js",
   "type": "module",

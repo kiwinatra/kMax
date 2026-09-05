@@ -1,4 +1,5 @@
 // src/main.ts
+
 import { CONFIG } from './config';
 import { locales, getLocale, initLocale } from './locales';
 import { logger } from './core/logger';
@@ -7,35 +8,178 @@ import { watchDOM } from './core/observer';
 import { applyAllFeatures, applyFeature, isFeatureEnabled, toggleFeature } from './registry';
 import { createVersionBadge } from './ui/versionBadge';
 import { waitForSettingsAndCreateButtons } from './ui/buttons';
-import { openSettingsModal } from './ui/index';
+import { openSettingsModal } from './ui/settingsModal';
+import { showLoader, hideLoader, showCrashScreen, isCrashScreenActive } from './ui/loader';
 import { FEATURES } from './registry';
+import { whenIdle, isTabVisible, onVisibilityChange } from './core/performance';
+import { applyStoredFont } from './features/changeFont';
+
+// ============================================================
+// СОСТОЯНИЕ
+// ============================================================
 
 let initialized = false;
+let initPromise: Promise<void> | null = null;
+let unwatchDom: (() => void) | null = null;
+let domWatchTimeout: number | null = null;
+let visibilityUnwatch: (() => void) | null = null;
 
-function init(): void {
-    if (initialized) return;
-    initialized = true;
+// ============================================================
+// КОНСТАНТЫ
+// ============================================================
 
-    initLocale();
-    logger.info(`${CONFIG.name} v${CONFIG.version} loaded`);
+const DOM_WATCH_DEBOUNCE = 500;
+const MAX_INIT_ATTEMPTS = 3;
 
-    if (!window.location.hostname.includes('max.ru')) {
+// ============================================================
+// ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+// ============================================================
+
+function isMaxSite(): boolean {
+    try {
+        return window.location.hostname.includes('max.ru');
+    } catch {
+        return false;
+    }
+}
+
+function safeApplyAllFeatures(): void {
+    try {
+        applyAllFeatures();
+    } catch (error) {
+        logger.error('Failed to apply all features:', error);
+    }
+}
+
+function handleDomChanges(): void {
+    if (!isTabVisible()) return;
+    
+    if (domWatchTimeout) {
+        clearTimeout(domWatchTimeout);
+    }
+    domWatchTimeout = window.setTimeout(() => {
+        domWatchTimeout = null;
+        try {
+            for (const key of Object.keys(FEATURES)) {
+                try {
+                    if (isFeatureEnabled(key)) {
+                        applyFeature(key);
+                    }
+                } catch (error) {
+                    logger.error(`Failed to apply feature "${key}" on DOM change:`, error);
+                }
+            }
+        } catch (error) {
+            logger.error('Error in DOM change handler:', error);
+        }
+    }, DOM_WATCH_DEBOUNCE);
+}
+
+// ============================================================
+// ИНИЦИАЛИЗАЦИЯ
+// ============================================================
+
+async function init(): Promise<void> {
+    if (initialized) {
+        logger.debug('Already initialized, skipping');
+        return;
+    }
+
+    if (initPromise) {
+        logger.debug('Initialization already in progress, waiting...');
+        return initPromise;
+    }
+
+    initPromise = (async () => {
+        let attempts = 0;
+        while (attempts < MAX_INIT_ATTEMPTS) {
+            try {
+                attempts++;
+                await doInit();
+                initialized = true;
+                logger.info(`✅ ${CONFIG.name} v${CONFIG.version} initialized successfully`);
+                return;
+            } catch (error) {
+                logger.error(`Init attempt ${attempts}/${MAX_INIT_ATTEMPTS} failed:`, error);
+                if (attempts >= MAX_INIT_ATTEMPTS) throw error;
+                await new Promise(resolve => setTimeout(resolve, 500 * attempts));
+            }
+        }
+    })();
+
+    return initPromise;
+}
+
+async function doInit(): Promise<void> {
+    if (!isMaxSite()) {
         logger.warn('Mod is not running on max.ru. Some features may not work.');
     }
 
-    applyAllFeatures();
-    createVersionBadge(CONFIG.version);
-    waitForSettingsAndCreateButtons();
+    initLocale();
+    logger.info(`🌐 Locale: ${getLocale('settingsTitle')}`);
 
-    watchDOM(() => {
-        for (const key of Object.keys(FEATURES)) {
-            if (isFeatureEnabled(key)) {
-                applyFeature(key);
+    // ===== КЛЮЧЕВОЙ МОМЕНТ: применяем фичи ДО скрытия загрузчика =====
+    safeApplyAllFeatures();
+
+    try {
+        createVersionBadge(CONFIG.version);
+    } catch (error) {
+        logger.error('Failed to create version badge:', error);
+    }
+
+    // Кнопки создаём отложенно (они не критичны)
+    try {
+        whenIdle(() => {
+            waitForSettingsAndCreateButtons();
+        }, 2000);
+    } catch (error) {
+        logger.error('Failed to create settings buttons:', error);
+    }
+
+    if (!unwatchDom) {
+        unwatchDom = watchDOM(() => {
+            handleDomChanges();
+        });
+        logger.debug('DOM watcher started');
+    }
+
+    if (!visibilityUnwatch) {
+        visibilityUnwatch = onVisibilityChange((visible) => {
+            if (visible) {
+                handleDomChanges();
             }
-        }
-    });
+        });
+    }
+
+    setupGlobalAPI();
+    applyStoredFont();
+    
+    // ===== СКРЫВАЕМ ЗАГРУЗЧИК ТОЛЬКО ПОСЛЕ ПРИМЕНЕНИЯ ФИЧ =====
+    hideLoader();
 
     logger.info('✅ Mod initialized');
+}
+
+function setupGlobalAPI(): void {
+    if (typeof window === 'undefined') return;
+
+    window.kmod = {
+        config: CONFIG,
+        storage,
+        locales,
+        getLocale,
+        utils: { logger },
+        features: {
+            toggleFeature,
+            isFeatureEnabled,
+            applyFeature,
+            applyAllFeatures: safeApplyAllFeatures,
+        },
+        ui: { openSettingsModal },
+        version: CONFIG.version,
+    };
+
+    logger.debug('✅ Global API available: window.kmod');
 }
 
 declare global {
@@ -45,47 +189,130 @@ declare global {
             storage: typeof storage;
             locales: typeof locales;
             getLocale: typeof getLocale;
-            utils: {
-                logger: typeof logger;
-            };
+            utils: { logger: typeof logger };
             features: {
                 toggleFeature: typeof toggleFeature;
                 isFeatureEnabled: typeof isFeatureEnabled;
                 applyFeature: typeof applyFeature;
                 applyAllFeatures: typeof applyAllFeatures;
             };
-            ui: {
-                openSettingsModal: typeof openSettingsModal;
-                
-            };
+            ui: { openSettingsModal: typeof openSettingsModal };
+            version: string;
         };
     }
 }
 
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
-} else {
-    init();
+// ============================================================
+// ЗАПУСК
+// ============================================================
+
+if (typeof window !== 'undefined') {
+    showLoader();
 }
 
-window.kmod = {
-    config: CONFIG,
-    storage,
-    locales,
-    getLocale,
-    utils: {
-        logger,
-    },
-    features: {
-        toggleFeature,
-        isFeatureEnabled,
-        applyFeature,
-        applyAllFeatures,
-    },
-    ui: {
-        openSettingsModal,
-        
-    },
-};
+const safeMode = typeof window !== 'undefined' && localStorage.getItem('kmod_safe_mode') === 'true';
 
-console.log('%c✅ API available: window.kmod', 'color: #4ade80; font-weight: bold;');
+if (safeMode) {
+    console.warn('[KMOD] 🛡️ Safe mode enabled — skipping initialization');
+    setTimeout(() => {
+        hideLoader();
+        showCrashScreen({
+            title: '🛡️ Безопасный режим',
+            message: 'Мод отключен в безопасном режиме. Чтобы включить снова — удалите kmod_safe_mode из localStorage.',
+        });
+    }, 500);
+} else if (typeof window !== 'undefined') {
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => {
+            whenIdle(() => {
+                init().catch((error) => {
+                    hideLoader();
+                    showCrashScreen({
+                        title: '💥 Ошибка инициализации',
+                        message: 'Мод не смог загрузиться. Попробуйте перезагрузить страницу или отключить мод.',
+                        error,
+                        details: `Попытка инициализации на ${window.location.hostname}`,
+                    });
+                });
+            }, 1500);
+        });
+    } else {
+        whenIdle(() => {
+            init().catch((error) => {
+                hideLoader();
+                showCrashScreen({
+                    title: '💥 Ошибка инициализации',
+                    message: 'Мод не смог загрузиться. Попробуйте перезагрузить страницу или отключить мод.',
+                    error,
+                    details: `Попытка инициализации на ${window.location.hostname}`,
+                });
+            });
+        }, 1000);
+    }
+}
+
+// ============================================================
+// ГЛОБАЛЬНЫЕ ХЕНДЛЕРЫ ОШИБОК
+// ============================================================
+
+if (typeof window !== 'undefined') {
+    window.addEventListener('error', (event) => {
+        const message = event.message || '';
+        const filename = event.filename || '';
+        if (message.includes('kmod') || message.includes('kMax') || message.includes('KMOD') ||
+            filename.includes('kmod') || filename.includes('kMax')) {
+            if (!isCrashScreenActive()) {
+                hideLoader();
+                showCrashScreen({
+                    title: '💥 Критическая ошибка мода',
+                    message: 'В работе мода произошла непредвиденная ошибка.',
+                    error: event.error || event.message,
+                    details: `${event.filename}:${event.lineno}:${event.colno}`,
+                });
+            }
+        }
+    });
+
+    window.addEventListener('unhandledrejection', (event) => {
+        const reason = event.reason;
+        const reasonStr = String(reason || '');
+        if (reason && typeof reason === 'object' && 
+            (reason.stack?.includes('kmod') || reason.stack?.includes('kMax') ||
+             reasonStr.includes('kmod') || reasonStr.includes('kMax'))) {
+            if (!isCrashScreenActive()) {
+                hideLoader();
+                showCrashScreen({
+                    title: '💥 Необработанная ошибка',
+                    message: 'В работе мода произошла непредвиденная ошибка.',
+                    error: reason,
+                });
+            }
+        }
+    });
+}
+
+// ============================================================
+// ЭКСПОРТЫ
+// ============================================================
+
+export { init, isMaxSite, handleDomChanges };
+
+// ============================================================
+// ОЧИСТКА
+// ============================================================
+
+window.addEventListener('beforeunload', () => {
+    if (unwatchDom) {
+        unwatchDom();
+        unwatchDom = null;
+    }
+    if (domWatchTimeout) {
+        clearTimeout(domWatchTimeout);
+        domWatchTimeout = null;
+    }
+    if (visibilityUnwatch) {
+        visibilityUnwatch();
+        visibilityUnwatch = null;
+    }
+    logger.debug('Cleanup completed');
+});

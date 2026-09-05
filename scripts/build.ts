@@ -9,40 +9,99 @@ const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, '..');
 const buildDir = path.join(rootDir, 'build');
 const outputFile = path.join(buildDir, 'mod.user.js');
+const outputMinFile = path.join(buildDir, 'mod.min.user.js');
+
+// ============================================================
+// ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+// ============================================================
 
 function ensureBuildDir(): void {
     if (!fs.existsSync(buildDir)) {
         fs.mkdirSync(buildDir, { recursive: true });
+        console.log('📁 Build directory created');
     }
 }
 
-function build(): void {
-    console.log('🔨 Building kmod...');
+function getPackageVersion(): string {
+    try {
+        const pkgPath = path.join(rootDir, 'package.json');
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+        return pkg.version || '1.0.0';
+    } catch {
+        return '1.0.0';
+    }
+}
+
+function getFileSize(filePath: string): string {
+    try {
+        const stats = fs.statSync(filePath);
+        return (stats.size / 1024).toFixed(2);
+    } catch {
+        return '0';
+    }
+}
+
+function createTampermonkeyHeader(version: string = getPackageVersion()): string {
+    return `// ==UserScript==
+// @name         kMax Mod
+// @namespace    http://tampermonkey.net/
+// @version      ${version}
+// @description  Mod for max.ru with extra features: beta tester crown, photo metadata, hiding elements and analytics blocking
+// @author       kMax Team
+// @match        *://*.max.ru/*
+// @match        *://max.ru/*
+// @grant        none
+// @run-at       document-start
+// ==/UserScript==
+
+`;
+}
+
+// ============================================================
+// ОСНОВНЫЕ ФУНКЦИИ СБОРКИ
+// ============================================================
+
+function build({ minify = true, sourcemap = true, watch = false } = {}): void {
+    console.log(`🔨 Building kmod... (minify: ${minify}, sourcemap: ${sourcemap})`);
 
     try {
         ensureBuildDir();
+
+        const version = getPackageVersion();
+        const outfile = minify ? outputMinFile : outputFile;
 
         const command = [
             'esbuild',
             'src/main.ts',
             '--bundle',
-            '--minify',
-            `--outfile=${outputFile}`,
+            minify ? '--minify' : '',
+            sourcemap ? '--sourcemap' : '',
+            `--outfile=${outfile}`,
             '--format=iife',
             '--platform=browser',
             '--target=es2020',
-            '--sourcemap',
             '--legal-comments=none',
-        ].join(' ');
+            watch ? '--watch' : '',
+        ].filter(Boolean).join(' ');
 
         console.log(`📦 Running: ${command}`);
         execSync(command, { stdio: 'inherit', cwd: rootDir });
 
-        console.log(`✅ Build complete: ${outputFile}`);
+        // Добавляем заголовок
+        const content = fs.readFileSync(outfile, 'utf-8');
+        const header = createTampermonkeyHeader(version);
+        fs.writeFileSync(outfile, header + content);
 
-        const stats = fs.statSync(outputFile);
-        const size = (stats.size / 1024).toFixed(2);
-        console.log(`📊 Size: ${size} KB`);
+        const size = getFileSize(outfile);
+        console.log(`✅ Build complete: ${outfile} (${size} KB)`);
+
+        // Если есть минифицированная версия — показываем размер
+        if (minify && fs.existsSync(outputMinFile)) {
+            const minSize = getFileSize(outputMinFile);
+            console.log(`📊 Minified: ${outputMinFile} (${minSize} KB)`);
+        }
+
+        return outfile;
 
     } catch (error) {
         console.error('❌ Build failed:', error);
@@ -52,117 +111,128 @@ function build(): void {
 
 function watch(): void {
     console.log('👀 Watching for changes...');
-
-    try {
-        ensureBuildDir();
-
-        const command = [
-            'esbuild',
-            'src/main.ts',
-            '--bundle',
-            `--outfile=${outputFile}`,
-            '--format=iife',
-            '--platform=browser',
-            '--target=es2020',
-            '--sourcemap',
-            '--watch',
-        ].join(' ');
-
-        execSync(command, { stdio: 'inherit', cwd: rootDir });
-
-    } catch (error) {
-        console.error('❌ Watch failed:', error);
-        process.exit(1);
-    }
+    build({ minify: false, sourcemap: true, watch: true });
 }
 
 function clean(): void {
     console.log('🧹 Cleaning build directory...');
 
     if (fs.existsSync(buildDir)) {
-        fs.rmSync(buildDir, { recursive: true, force: true });
-        console.log('✅ Clean complete');
+        const files = fs.readdirSync(buildDir);
+        let count = 0;
+        for (const file of files) {
+            fs.rmSync(path.join(buildDir, file), { recursive: true, force: true });
+            count++;
+        }
+        console.log(`✅ Clean complete: ${count} files removed`);
     } else {
         console.log('ℹ️  Build directory does not exist');
     }
 }
 
-function createTampermonkeyHeader(): void {
+function fullBuild(): void {
+    console.log('🎯 Full build started...');
+    clean();
+    const outfile = build({ minify: true, sourcemap: true });
+    console.log(`🎉 Full build complete! Output: ${outfile}`);
+}
+
+function devBuild(): void {
+    console.log('🔧 Building dev version (no minify)...');
+    build({ minify: false, sourcemap: true });
+    console.log('✅ Dev build complete!');
+}
+
+function headerOnly(): void {
     console.log('📝 Creating Tampermonkey header...');
 
-    const header = `// ==UserScript==
-// @name         kMax Mod
-// @namespace    http://tampermonkey.net/
-// @version      1.0.0
-// @description  Mod for max.ru
-// @author       kMax Team
-// @match        *://*.max.ru/*
-// @match        *://max.ru/*
-// @grant        none
-// @run-at       document-start
-// ==/UserScript==
+    const version = getPackageVersion();
+    const header = createTampermonkeyHeader(version);
 
-`;
+    // Проверяем наличие собранного файла
+    const files = [
+        { path: outputMinFile, label: 'minified' },
+        { path: outputFile, label: 'source' },
+    ];
 
-    const outputWithHeader = path.join(buildDir, 'mod.user.js');
+    let found = false;
+    for (const file of files) {
+        if (fs.existsSync(file.path)) {
+            const content = fs.readFileSync(file.path, 'utf-8');
+            // Удаляем старый заголовок, если есть
+            const cleanContent = content.replace(/\/\/ ==UserScript==[\s\S]*?\/\/ ==\/UserScript==\n\n/, '');
+            fs.writeFileSync(file.path, header + cleanContent);
+            console.log(`✅ Header added to: ${file.path}`);
+            found = true;
+        }
+    }
 
-    if (fs.existsSync(outputFile)) {
-        const content = fs.readFileSync(outputFile, 'utf-8');
-        fs.writeFileSync(outputWithHeader, header + content);
-        console.log(`✅ Tampermonkey script created: ${outputWithHeader}`);
-    } else {
-        console.log('⚠️  Build file not found, run build first');
+    if (!found) {
+        console.log('⚠️  No build file found. Run "npm run build" first.');
     }
 }
 
-function fullBuild(): void {
-    clean();
-    build();
-    createTampermonkeyHeader();
-    console.log('🎉 Full build complete!');
-}
+function stats(): void {
+    console.log('📊 Build statistics:');
 
-function createDevBuild(): void {
-    console.log('🔨 Building dev version with sourcemap...');
+    const files = [
+        { path: outputMinFile, label: 'Minified' },
+        { path: outputFile, label: 'Source' },
+    ];
 
-    try {
-        ensureBuildDir();
+    let totalSize = 0;
+    for (const file of files) {
+        if (fs.existsSync(file.path)) {
+            const size = getFileSize(file.path);
+            const stats = fs.statSync(file.path);
+            console.log(`  ${file.label}: ${size} KB (${stats.size} bytes)`);
+            totalSize += stats.size;
+        } else {
+            console.log(`  ${file.label}: not found`);
+        }
+    }
 
-        const command = [
-            'esbuild',
-            'src/main.ts',
-            '--bundle',
-            `--outfile=${outputFile}`,
-            '--format=iife',
-            '--platform=browser',
-            '--target=es2020',
-            '--sourcemap',
-            '--legal-comments=none',
-        ].join(' ');
-
-        console.log(`📦 Running: ${command}`);
-        execSync(command, { stdio: 'inherit', cwd: rootDir });
-
-        console.log(`✅ Dev build complete: ${outputFile}`);
-
-        const stats = fs.statSync(outputFile);
-        const size = (stats.size / 1024).toFixed(2);
-        console.log(`📊 Size: ${size} KB`);
-
-        createTampermonkeyHeader();
-
-    } catch (error) {
-        console.error('❌ Dev build failed:', error);
-        process.exit(1);
+    if (totalSize > 0) {
+        console.log(`  Total: ${(totalSize / 1024).toFixed(2)} KB`);
     }
 }
+
+function help(): void {
+    console.log(`
+╔══════════════════════════════════════════════════════════╗
+║                   kMax Mod Builder                       ║
+╚══════════════════════════════════════════════════════════╝
+
+Usage: npm run build [command]
+
+Commands:
+  build   - Build the mod (minified, with sourcemap)
+  watch   - Watch for changes and rebuild (dev mode)
+  clean   - Clean build directory
+  header  - Add Tampermonkey header to existing build
+  full    - Clean + Build + Header (production)
+  dev     - Build without minification (debug)
+  stats   - Show build statistics
+  help    - Show this help
+
+Examples:
+  npm run build          # Quick build
+  npm run build full     # Full production build
+  npm run build watch    # Watch mode
+  npm run build dev      # Dev build with sourcemap
+`);
+}
+
+// ============================================================
+// ЗАПУСК
+// ============================================================
 
 const args = process.argv.slice(2);
 const command = args[0] || 'build';
 
 switch (command) {
     case 'build':
-        build();
+        build({ minify: true, sourcemap: true });
         break;
     case 'watch':
         watch();
@@ -171,25 +241,24 @@ switch (command) {
         clean();
         break;
     case 'header':
-        createTampermonkeyHeader();
+        headerOnly();
         break;
     case 'full':
         fullBuild();
         break;
     case 'dev':
-        createDevBuild();
+        devBuild();
+        break;
+    case 'stats':
+        stats();
+        break;
+    case 'help':
+    case '--help':
+    case '-h':
+        help();
         break;
     default:
-        console.log(`
-Usage: npm run build [command]
-
-Commands:
-  build   - Build the mod (minified)
-  watch   - Watch for changes and rebuild
-  clean   - Clean build directory
-  header  - Create Tampermonkey header
-  full    - Clean + Build + Header
-  dev     - Build with sourcemap (no minify)
-        `);
+        console.log(`❌ Unknown command: ${command}`);
+        help();
         break;
 }

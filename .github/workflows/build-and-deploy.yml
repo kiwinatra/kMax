@@ -1,0 +1,53 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      # 1. Клонируем исходный репозиторий
+      - name: Checkout source repo
+        uses: actions/checkout@v4
+        with:
+          path: source
+      
+      # 2. Устанавливаем Node.js
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      
+      # 3. Устанавливаем зависимости и собираем проект
+      - name: Install dependencies and build
+        working-directory: ./source
+        run: |
+          npm ci
+          npm run full
+      
+      # 4. Клонируем целевой репозиторий (куда будем пушить билд)
+      - name: Checkout target repo
+        uses: actions/checkout@v4
+        with:
+          repository: kiwinatra/kmax-builds
+          token: ${{ secrets.DEPLOY_TK }}
+          path: target
+      
+      # 5. Копируем собранный файл в целевой репозиторий
+      - name: Copy build file
+        run: |
+          cp source/build/mod.min.user.js target/
+      
+      # 6. Коммитим и пушим изменения
+      - name: Commit and push
+        working-directory: ./target
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add mod.min.user.js
+          git commit -m "Update build from source repo [skip ci]" || echo "No changes to commit"
+          git push

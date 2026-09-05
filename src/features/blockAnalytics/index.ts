@@ -16,8 +16,16 @@ function generateFakeId(): string {
     });
 }
 
+// ============================================================
+// ИСПРАВЛЕНО: НЕ ТРОГАЕМ KMOD-КЛЮЧИ
+// ============================================================
 function isTracerKey(key: string): boolean {
     if (!key) return false;
+    
+    // ← ЗАЩИТА: ПРОПУСКАЕМ KMOD-КЛЮЧИ
+    if (key.startsWith('kmod_')) return false;
+    if (key.startsWith('kmod-')) return false;
+    
     const lower = key.toLowerCase();
     return lower.includes('tracer') ||
            lower.includes('apptracer') ||
@@ -291,18 +299,28 @@ export function enable(): void {
     };
 
     // ===== 8. ОЧИЩАЕМ СУЩЕСТВУЮЩИЕ ДАННЫЕ =====
+    // ← ИСПРАВЛЕНО: НЕ ТРОГАЕМ KMOD-КЛЮЧИ
     for (let i = 0; i < localStorage.length; i++) {
         const key = localStorage.key(i);
         if (key && isTracerKey(key)) {
+            // Дополнительная защита от удаления kmod-ключей
+            if (key.startsWith('kmod_')) continue;
+            if (key.startsWith('kmod-')) continue;
+            
             localStorage.removeItem(key);
             logger.debug(`🧹 Удалён localStorage: ${key}`);
         }
     }
 
+    // ← ИСПРАВЛЕНО: НЕ ТРОГАЕМ KMOD-КУКИ
     const cookies = document.cookie.split(';');
     for (const cookie of cookies) {
         const name = cookie.trim().split('=')[0] || '';
         if (isTracerKey(name)) {
+            // Дополнительная защита от удаления kmod-кук
+            if (name.startsWith('kmod_')) continue;
+            if (name.startsWith('kmod-')) continue;
+            
             document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;`;
             logger.debug(`🧹 Удалён cookie: ${name}`);
         }

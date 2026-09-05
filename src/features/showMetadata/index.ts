@@ -1,50 +1,36 @@
 // src/features/showMetadata/index.ts
+
 import { logger } from '../../core/logger';
 import { storage } from '../../core/storage';
 import { watchDOM } from '../../core/observer';
 import { qsa, createElement } from '../../core/dom';
 import { OFFSETS } from '../../offsets';
 
+// ============================================================
+// КОНСТАНТЫ
+// ============================================================
+
+const DEBOUNCE_DELAY = 300; // ms
+const METADATA_BUTTON_CLASS = 'kmod-metadata-btn';
+const MAX_CACHE_SIZE = 50; // кеш метаданных
+
+// ============================================================
+// СОСТОЯНИЕ
+// ============================================================
+
 let isEnabled = false;
 let unwatch: (() => void) | null = null;
-let checkInterval: number | null = null;
+let debounceTimer: number | null = null;
+let processedContainers = new WeakSet<HTMLElement>();
+const metadataCache = new Map<string, any>();
 
-async function getImageMetadata(img: HTMLImageElement): Promise<any> {
-    const metadata: any = {};
+// ============================================================
+// ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+// ============================================================
 
-    metadata.width = img.naturalWidth || img.width;
-    metadata.height = img.naturalHeight || img.height;
-    metadata.aspectRatio = (metadata.width / metadata.height).toFixed(2);
-
-    const src = img.src;
-    if (src) {
-        const ext = src.split('.').pop()?.toUpperCase() || 'Unknown';
-        metadata.format = ext;
-        metadata.url = src;
-    }
-
-    try {
-        const response = await fetch(img.src, { method: 'HEAD' });
-        const contentLength = response.headers.get('content-length');
-        if (contentLength) {
-            const size = parseInt(contentLength);
-            metadata.fileSize = size;
-            metadata.fileSizeFormatted = formatFileSize(size);
-        }
-    } catch {}
-
-    metadata.loadedAt = new Date().toLocaleString('ru-RU', {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit'
-    });
-
-    return metadata;
-}
-
+/**
+ * Форматирование размера файла
+ */
 function formatFileSize(bytes: number): string {
     if (bytes < 1024) return bytes + ' B';
     if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
@@ -52,6 +38,126 @@ function formatFileSize(bytes: number): string {
     return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
 }
 
+/**
+ * Получение метаданных изображения (с кешированием)
+ */
+async function getImageMetadata(img: HTMLImageElement): Promise<any> {
+    const cacheKey = img.src;
+    
+    // Проверяем кеш
+    if (metadataCache.has(cacheKey)) {
+        return metadataCache.get(cacheKey);
+    }
+
+    const metadata: any = {};
+
+    // Размеры
+    metadata.width = img.naturalWidth || img.width || 0;
+    metadata.height = img.naturalHeight || img.height || 0;
+    metadata.aspectRatio = metadata.width && metadata.height 
+        ? (metadata.width / metadata.height).toFixed(2) 
+        : 'N/A';
+
+    // Формат
+    const src = img.src;
+    if (src) {
+        const ext = src.split('.').pop()?.toUpperCase() || 'Unknown';
+        metadata.format = ext;
+        metadata.url = src;
+    }
+
+    // Размер файла (HEAD-запрос)
+    try {
+        const response = await fetch(img.src, { 
+            method: 'HEAD',
+            cache: 'force-cache',
+        });
+        const contentLength = response.headers.get('content-length');
+        if (contentLength) {
+            const size = parseInt(contentLength);
+            if (!isNaN(size) && size > 0) {
+                metadata.fileSize = size;
+                metadata.fileSizeFormatted = formatFileSize(size);
+            }
+        }
+    } catch (error) {
+        // Тихо, если не удалось получить размер
+    }
+
+    // Дата загрузки
+    metadata.loadedAt = new Date().toLocaleString('ru-RU', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+    });
+
+    // Сохраняем в кеш
+    if (metadataCache.size >= MAX_CACHE_SIZE) {
+        // Удаляем старый элемент
+        const firstKey = metadataCache.keys().next().value;
+        if (firstKey) metadataCache.delete(firstKey);
+    }
+    metadataCache.set(cacheKey, metadata);
+
+    return metadata;
+}
+
+/**
+ * Построение HTML для модального окна
+ */
+function buildMetadataHTML(metadata: any): string {
+    const fields = [
+        { key: 'width', label: '📐 Ширина' },
+        { key: 'height', label: '📏 Высота' },
+        { key: 'aspectRatio', label: '🔄 Соотношение' },
+        { key: 'format', label: '📁 Формат' },
+        { key: 'fileSizeFormatted', label: '💾 Размер' },
+        { key: 'loadedAt', label: '🕐 Загружено' },
+    ];
+
+    let html = '';
+    let hasData = false;
+
+    for (const field of fields) {
+        const value = metadata[field.key];
+        if (value === undefined || value === null || value === '') continue;
+        if (value === 'N/A') continue;
+        if (typeof value === 'number' && value === 0) continue;
+        
+        hasData = true;
+        html += `
+            <div class="field">
+                <span class="label">${field.label}</span>
+                <span class="value">${String(value)}</span>
+            </div>
+        `;
+    }
+
+    if (metadata.url) {
+        hasData = true;
+        html += `
+            <div class="field">
+                <span class="label">🔗 Ссылка</span>
+                <span class="value" data-copy="${metadata.url}" style="cursor:pointer;color:#60a5fa;">
+                    Копировать
+                </span>
+            </div>
+        `;
+    }
+
+    if (!hasData) {
+        html = `<div class="empty">Нет доступных данных</div>`;
+    }
+
+    return html;
+}
+
+/**
+ * Открытие модального окна с метаданными
+ */
 function openMetadataTab(metadata: any): void {
     const html = `
 <!DOCTYPE html>
@@ -79,6 +185,11 @@ function openMetadataTab(metadata: any): void {
             width: 100%;
             box-shadow: 0 24px 80px rgba(0,0,0,0.8);
             border: 1px solid rgba(255,255,255,0.06);
+            animation: fadeIn 0.2s ease;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: scale(0.95); }
+            to { opacity: 1; transform: scale(1); }
         }
         .header {
             display: flex;
@@ -188,75 +299,38 @@ function openMetadataTab(metadata: any): void {
 </html>
     `;
 
-    const win = window.open('about:blank', '_blank');
-    if (win) {
-        win.document.write(html);
-        win.document.close();
-        win.focus();
-    } else {
-        logger.error('Не удалось открыть вкладку. Разрешите всплывающие окна для этого сайта.');
+    try {
+        const win = window.open('', '_blank');
+        if (win) {
+            win.document.write(html);
+            win.document.close();
+            win.focus();
+        } else {
+            logger.error('Не удалось открыть вкладку. Разрешите всплывающие окна.');
+            alert('⚠️ Разрешите всплывающие окна для этого сайта, чтобы увидеть метаданные.');
+        }
+    } catch (error) {
+        logger.error('Ошибка при открытии вкладки:', error);
     }
 }
 
-function buildMetadataHTML(metadata: any): string {
-    const fields = [
-        { key: 'width', label: '📐 Ширина' },
-        { key: 'height', label: '📏 Высота' },
-        { key: 'aspectRatio', label: '🔄 Соотношение' },
-        { key: 'format', label: '📁 Формат' },
-        { key: 'fileSizeFormatted', label: '💾 Размер' },
-        { key: 'loadedAt', label: '🕐 Загружено' },
-    ];
-
-    let html = '';
-    let hasData = false;
-
-    for (const field of fields) {
-        const value = metadata[field.key];
-        if (value === undefined || value === null || value === '') continue;
-        hasData = true;
-        html += `
-            <div class="field">
-                <span class="label">${field.label}</span>
-                <span class="value">${String(value)}</span>
-            </div>
-        `;
-    }
-
-    if (metadata.url) {
-        hasData = true;
-        html += `
-            <div class="field">
-                <span class="label">🔗 Ссылка</span>
-                <span class="value" data-copy="${metadata.url}" style="cursor:pointer;color:#60a5fa;">
-                    Копировать
-                </span>
-            </div>
-        `;
-    }
-
-    if (!hasData) {
-        html = `<div class="empty">Нет доступных данных</div>`;
-    }
-
-    return html;
-}
-
+/**
+ * Поиск контейнеров с фото (оптимизированный)
+ */
 function findPhotoContainers(): HTMLElement[] {
-    // Ищем все div с классом actions svelte-2k9gk6
+    // Ищем все div.actions.svelte-2k9gk6
     const actionsElements = document.querySelectorAll('div.actions.svelte-2k9gk6');
     const containers: HTMLElement[] = [];
 
     for (const actions of actionsElements) {
-        // Проверяем, что внутри есть изображение
         const img = actions.querySelector('img');
-        if (img) {
+        if (img && img.src) {
             containers.push(actions as HTMLElement);
         }
     }
 
+    // Если нашли — возвращаем
     if (containers.length > 0) {
-        logger.debug(`Found ${containers.length} photo containers with actions`);
         return containers;
     }
 
@@ -265,167 +339,205 @@ function findPhotoContainers(): HTMLElement[] {
     const uniqueContainers = new Set<HTMLElement>();
 
     for (const img of allImages) {
+        if (!img.src) continue;
+        
         let parent = img.parentElement;
-        while (parent && !parent.classList.contains('actions')) {
+        let depth = 0;
+        while (parent && depth < 5) {
+            if (parent.classList.contains('actions')) {
+                uniqueContainers.add(parent as HTMLElement);
+                break;
+            }
             parent = parent.parentElement;
-        }
-        if (parent) {
-            uniqueContainers.add(parent as HTMLElement);
+            depth++;
         }
     }
 
-    const result = Array.from(uniqueContainers);
-    if (result.length > 0) {
-        logger.debug(`Found ${result.length} containers by fallback search`);
-    }
-
-    return result;
+    return Array.from(uniqueContainers);
 }
 
+/**
+ * Добавление кнопки метаданных к контейнеру
+ */
 function addMetadataButton(container: HTMLElement): void {
     // Проверяем, есть ли уже кнопка
-    if (container.querySelector('.kmod-metadata-btn')) {
-        return;
-    }
+    if (container.querySelector(`.${METADATA_BUTTON_CLASS}`)) return;
+    
+    // Проверяем, не обрабатывали ли уже этот контейнер
+    if (processedContainers.has(container)) return;
 
-    // Ищем изображение внутри контейнера
     const img = container.querySelector('img');
-    if (!img) {
-        return;
-    }
+    if (!img || !img.src) return;
 
     // Проверяем, что изображение загружено
-    if (!img.src || img.src === '') {
+    if (!img.complete || img.naturalWidth === 0) {
+        // Если не загружено — ждём
+        img.addEventListener('load', () => {
+            if (isEnabled) {
+                addMetadataButton(container);
+            }
+        }, { once: true });
         return;
     }
 
-    logger.debug(`Adding metadata button for image: ${img.src.substring(0, 50)}...`);
+    // Помечаем как обработанный
+    processedContainers.add(container);
 
-    // Создаем кнопку с правильными классами
+    // Создаём кнопку
     const button = createElement('button', {
-        className: 'button button--small button--ghost svelte-15dnyr kmod-metadata-btn',
+        className: `button button--small button--ghost svelte-15dnyr ${METADATA_BUTTON_CLASS}`,
         events: {
             click: async (e) => {
                 e.stopPropagation();
                 const btn = e.currentTarget as HTMLElement;
-                const span = btn.querySelector('.content');
-                if (span) span.textContent = '⏳';
+                const span = btn.querySelector('.content') as HTMLElement;
+                if (span) {
+                    span.textContent = '⏳ Загрузка...';
+                    span.style.opacity = '0.5';
+                }
 
                 try {
                     const metadata = await getImageMetadata(img);
                     openMetadataTab(metadata);
                 } catch (error) {
                     logger.error('Ошибка получения метаданных:', error);
-                    if (span) span.textContent = '❌';
-                    setTimeout(() => {
-                        if (span) span.textContent = 'Metadata';
-                    }, 2000);
+                    if (span) {
+                        span.textContent = '❌ Ошибка';
+                        span.style.color = '#ed4245';
+                        setTimeout(() => {
+                            span.textContent = 'Metadata';
+                            span.style.color = '';
+                            span.style.opacity = '';
+                        }, 2000);
+                    }
                 } finally {
-                    if (span && span.textContent !== '❌') {
+                    if (span && span.textContent !== '❌ Ошибка') {
                         span.textContent = 'Metadata';
+                        span.style.opacity = '';
                     }
                 }
-            }
-        }
+            },
+        },
+        attrs: {
+            title: 'Показать метаданные фото',
+        },
     });
 
     const span = createElement('span', {
         className: 'content svelte-15dnyr',
+        text: 'Metadata',
     });
-    span.textContent = 'Metadata';
     button.appendChild(span);
 
+    // Добавляем в конец контейнера
     container.appendChild(button);
-    logger.debug('Metadata button added');
 }
 
+/**
+ * Обработка страницы (основная логика)
+ */
 function processPage(): void {
-    // Проверяем состояние из storage
     const enabled = storage.getBoolean('showMetadata');
     if (!enabled) return;
 
     const containers = findPhotoContainers();
-
-    if (containers.length === 0) {
-        return;
-    }
+    if (containers.length === 0) return;
 
     let added = 0;
     for (const container of containers) {
-        if (!container.querySelector('.kmod-metadata-btn')) {
+        if (!container.querySelector(`.${METADATA_BUTTON_CLASS}`)) {
             addMetadataButton(container);
             added++;
         }
     }
 
     if (added > 0) {
-        logger.debug(`Added ${added} metadata buttons`);
+        logger.debug(`📷 Added ${added} metadata buttons`);
     }
 }
 
+/**
+ * Удаление всех кнопок
+ */
+function removeAllButtons(): void {
+    const buttons = document.querySelectorAll(`.${METADATA_BUTTON_CLASS}`);
+    for (const btn of buttons) {
+        btn.remove();
+    }
+    processedContainers = new WeakSet(); // Очищаем кеш
+    metadataCache.clear(); // Очищаем кеш метаданных
+}
+
+/**
+ * Debounced версия processPage
+ */
+function debouncedProcess(): void {
+    if (debounceTimer) {
+        clearTimeout(debounceTimer);
+    }
+    debounceTimer = window.setTimeout(() => {
+        debounceTimer = null;
+        processPage();
+    }, DEBOUNCE_DELAY);
+}
+
+// ============================================================
+// ПУБЛИЧНЫЙ API
+// ============================================================
+
+/**
+ * Применение текущего состояния
+ */
 export function apply(): void {
-    // Проверяем состояние из storage
     const enabled = storage.getBoolean('showMetadata');
     if (enabled) {
         processPage();
     } else {
-        removeButtons();
+        removeAllButtons();
     }
 }
 
-function removeButtons(): void {
-    const buttons = document.querySelectorAll('.kmod-metadata-btn');
-    for (const btn of buttons) {
-        btn.remove();
-    }
-}
-
+/**
+ * Включение функции
+ */
 export function enable(): void {
     if (isEnabled) return;
     isEnabled = true;
 
-    logger.info('📷 Metadata кнопка включена');
-
-    // Обрабатываем существующие элементы
+    logger.info('📷 Metadata button enabled');
     processPage();
 
-    // Подписываемся на изменения DOM
     if (!unwatch) {
         unwatch = watchDOM(() => {
-            processPage();
+            debouncedProcess();
         });
-    }
-
-    // Агрессивная проверка каждую секунду
-    if (!checkInterval) {
-        checkInterval = window.setInterval(() => {
-            processPage();
-        }, 1000);
-        logger.debug('Started aggressive checking interval (1s)');
     }
 }
 
+/**
+ * Отключение функции
+ */
 export function disable(): void {
     if (!isEnabled) return;
     isEnabled = false;
 
-    // Отписываемся от DOM-изменений
     if (unwatch) {
         unwatch();
         unwatch = null;
     }
 
-    // Останавливаем интервал
-    if (checkInterval) {
-        clearInterval(checkInterval);
-        checkInterval = null;
-        logger.debug('Stopped aggressive checking interval');
+    if (debounceTimer) {
+        clearTimeout(debounceTimer);
+        debounceTimer = null;
     }
 
-    removeButtons();
-    logger.info('📷 Metadata кнопка отключена');
+    removeAllButtons();
+    logger.info('📷 Metadata button disabled');
 }
 
+/**
+ * Переключение состояния
+ */
 export function toggle(): boolean {
     const current = storage.getBoolean('showMetadata');
     const newState = !current;
@@ -439,3 +551,18 @@ export function toggle(): boolean {
 
     return newState;
 }
+
+// ============================================================
+// ОЧИСТКА ПРИ ВЫГРУЗКЕ
+// ============================================================
+
+window.addEventListener('beforeunload', () => {
+    if (unwatch) {
+        unwatch();
+        unwatch = null;
+    }
+    if (debounceTimer) {
+        clearTimeout(debounceTimer);
+        debounceTimer = null;
+    }
+});
