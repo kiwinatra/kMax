@@ -34,7 +34,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: kiwinatra/kmax-builds
-          token: ${{ secrets.DEPLOY_TK }}
+          token: ${{ secrets.DEPLOY_TK }} #yes?
           path: target
       
       # 5. Копируем собранный файл в целевой репозиторий
