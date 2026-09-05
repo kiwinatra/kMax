@@ -34,7 +34,143 @@ function findComposerInput(): HTMLElement | null {
 }
 
 // ============================================================
-// СОЗДАНИЕ UI ПОДСКАЗОК (ДИЗАЙН КАК В НАСТРОЙКАХ)
+// МОДАЛЬНОЕ ОКНО ПОДТВЕРЖДЕНИЯ
+// ============================================================
+
+function showConfirmModal(template: Template, onConfirm: () => void): void {
+    // Удаляем старую модалку, если есть
+    const oldModal = document.querySelector('.kmod-template-confirm');
+    if (oldModal) oldModal.remove();
+
+    const overlay = document.createElement('div');
+    overlay.className = 'kmod-template-confirm';
+    overlay.style.cssText = `
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.7);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        z-index: 9999999;
+        backdrop-filter: blur(4px);
+        animation: kmodFadeScale 0.15s ease;
+    `;
+
+    const modal = document.createElement('div');
+    modal.style.cssText = `
+        background: #313338;
+        border-radius: 12px;
+        padding: 32px 36px;
+        max-width: 420px;
+        width: 90%;
+        box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        color: #dbdee1;
+        animation: kmodFadeScale 0.15s ease;
+    `;
+
+    // Заголовок
+    const title = document.createElement('div');
+    title.style.cssText = `
+        font-size: 18px;
+        font-weight: 700;
+        color: #f2f3f5;
+        margin-bottom: 8px;
+    `;
+    title.textContent = '📝 Вставить шаблон?';
+
+    // Описание
+    const desc = document.createElement('div');
+    desc.style.cssText = `
+        font-size: 14px;
+        color: #949ba4;
+        margin-bottom: 16px;
+        line-height: 1.5;
+    `;
+    desc.innerHTML = `
+        <span style="color:#4ade80;font-weight:700;font-family:monospace;">${template.command}</span>
+        <span style="color:#dbdee1;">→</span>
+        <span style="color:#dbdee1;">${template.text}</span>
+    `;
+
+    // Кнопки
+    const btnWrapper = document.createElement('div');
+    btnWrapper.style.cssText = `
+        display: flex;
+        gap: 10px;
+        justify-content: flex-end;
+    `;
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.style.cssText = `
+        padding: 8px 20px;
+        border-radius: 8px;
+        border: none;
+        background: #4e5058;
+        color: #f2f3f5;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.15s;
+    `;
+    cancelBtn.textContent = 'Отмена';
+    cancelBtn.onmouseenter = () => { cancelBtn.style.background = '#6d6f78'; };
+    cancelBtn.onmouseleave = () => { cancelBtn.style.background = '#4e5058'; };
+    cancelBtn.onclick = () => {
+        overlay.remove();
+        hideSuggestions();
+    };
+
+    const confirmBtn = document.createElement('button');
+    confirmBtn.style.cssText = `
+        padding: 8px 24px;
+        border-radius: 8px;
+        border: none;
+        background: #4ade80;
+        color: #0a0a0f;
+        font-size: 13px;
+        font-weight: 700;
+        cursor: pointer;
+        transition: all 0.15s;
+    `;
+    confirmBtn.textContent = '✅ Вставить';
+    confirmBtn.onmouseenter = () => { confirmBtn.style.background = '#34d399'; };
+    confirmBtn.onmouseleave = () => { confirmBtn.style.background = '#4ade80'; };
+    confirmBtn.onclick = () => {
+        overlay.remove();
+        onConfirm();
+    };
+
+    btnWrapper.appendChild(cancelBtn);
+    btnWrapper.appendChild(confirmBtn);
+
+    modal.appendChild(title);
+    modal.appendChild(desc);
+    modal.appendChild(btnWrapper);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    // Закрытие по клику на оверлей
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) {
+            overlay.remove();
+            hideSuggestions();
+        }
+    });
+
+    // Закрытие по Escape
+    const escHandler = (e: KeyboardEvent) => {
+        if (e.key === 'Escape') {
+            overlay.remove();
+            hideSuggestions();
+            document.removeEventListener('keydown', escHandler);
+        }
+    };
+    document.addEventListener('keydown', escHandler);
+}
+
+// ============================================================
+// СОЗДАНИЕ UI ПОДСКАЗОК
 // ============================================================
 
 function createSuggestions(): HTMLElement {
@@ -57,7 +193,6 @@ function createSuggestions(): HTMLElement {
         padding: 4px 0;
     `;
 
-    // Стили для скролла
     container.style.scrollbarWidth = 'thin';
     container.style.scrollbarColor = '#1e1f22 transparent';
     
@@ -99,10 +234,12 @@ function renderSuggestions(container: HTMLElement, templates: Template[]): void 
             item.style.background = 'transparent';
         };
         item.onclick = () => {
-            insertTemplate(template);
+            // Показываем модалку подтверждения
+            showConfirmModal(template, () => {
+                insertTemplate(template);
+            });
         };
         
-        // Команда (зелёная, жирная)
         const command = document.createElement('span');
         command.style.cssText = `
             color: #4ade80;
@@ -116,7 +253,6 @@ function renderSuggestions(container: HTMLElement, templates: Template[]): void 
         `;
         command.textContent = template.command;
         
-        // Текст (серый)
         const text = document.createElement('span');
         text.style.cssText = `
             color: #dbdee1;
@@ -139,17 +275,14 @@ function positionSuggestions(container: HTMLElement, input: HTMLElement): void {
     const viewportWidth = window.innerWidth;
     const viewportHeight = window.innerHeight;
     
-    // Контейнер будет справа снизу от инпута
     const containerWidth = Math.min(380, viewportWidth - 40);
     const containerHeight = Math.min(200, viewportHeight - 200);
     
-    // Позиция: справа от инпута, чуть ниже
     let left = rect.right - containerWidth - 12;
     if (left < 12) left = 12;
     
     let top = rect.bottom + 8;
     if (top + containerHeight + 20 > viewportHeight) {
-        // Если снизу не влезает, показываем сверху
         top = rect.top - containerHeight - 8;
         if (top < 12) top = 12;
     }
@@ -165,14 +298,12 @@ function insertTemplate(template: Template): void {
     
     const input = currentInput as HTMLElement;
     
-    // 1. Фокусируемся на поле
     input.focus();
     
-    // 2. Удаляем команду из текста (оставляем только текст шаблона)
-    // Очищаем поле полностью
+    // Очищаем поле
     clearLexicalInput(input);
     
-    // 3. Вставляем текст через paste событие
+    // Вставляем текст через paste
     const pasteEvent = new ClipboardEvent('paste', {
         bubbles: true,
         cancelable: true,
@@ -181,7 +312,6 @@ function insertTemplate(template: Template): void {
     pasteEvent.clipboardData?.setData('text/plain', template.text);
     input.dispatchEvent(pasteEvent);
     
-    // 4. Триггерим input событие для обновления UI
     setTimeout(() => {
         input.dispatchEvent(new Event('input', { bubbles: true }));
     }, 10);
@@ -191,17 +321,9 @@ function insertTemplate(template: Template): void {
 }
 
 function clearLexicalInput(input: HTMLElement): void {
-    // Для Lexical Editor нужно очистить через innerHTML
-    // Находим родительский блок
     const lexicalBlock = input.closest('.contenteditable.svelte-1k31az8') || input;
-    
-    // Очищаем содержимое
     lexicalBlock.innerHTML = '<p class="paragraph" dir="auto"><br></p>';
-    
-    // Триггерим событие input
     lexicalBlock.dispatchEvent(new Event('input', { bubbles: true }));
-    
-    // Обновляем ссылку на currentInput
     currentInput = lexicalBlock as HTMLElement;
 }
 
@@ -264,9 +386,7 @@ function processInput(input: HTMLElement): void {
 
 function setupInputListener(): void {
     const input = findComposerInput();
-    if (!input) {
-        return;
-    }
+    if (!input) return;
     
     input.removeEventListener('input', inputHandler);
     input.addEventListener('input', inputHandler);
