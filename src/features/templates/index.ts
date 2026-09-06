@@ -152,7 +152,7 @@ function showTemplateModal(template: Template): void {
     confirmBtn.onmouseleave = () => { confirmBtn.style.background = '#4ade80'; };
     confirmBtn.onclick = () => {
         overlay.remove(); // Закрываем модалку
-        // Небольшая задержка, чтобы фокус вернулся на поле
+        // Даём время на закрытие
         setTimeout(() => {
             insertTemplate(template);
         }, 50);
@@ -199,7 +199,7 @@ function insertTemplate(template: Template): void {
     const input = currentInput as HTMLElement;
     input.focus();
 
-    // 1. Выделяем всё содержимое поля
+    // 1. Выделяем весь текст через Range
     const sel = window.getSelection();
     if (sel) {
         const range = document.createRange();
@@ -208,19 +208,11 @@ function insertTemplate(template: Template): void {
         sel.addRange(range);
     }
 
-    // 2. Вставляем текст через paste (работает с Lexical)
-    const pasteEvent = new ClipboardEvent('paste', {
-        bubbles: true,
-        cancelable: true,
-        clipboardData: new DataTransfer()
-    });
-    pasteEvent.clipboardData?.setData('text/plain', template.text);
-    input.dispatchEvent(pasteEvent);
+    // 2. Вставляем HTML с новым параграфом (заменяет выделенное)
+    document.execCommand('insertHTML', false, `<p class="paragraph" dir="auto">${template.text}</p>`);
 
     // 3. Триггерим событие input для обновления UI
-    setTimeout(() => {
-        input.dispatchEvent(new Event('input', { bubbles: true }));
-    }, 10);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
 
     logger.debug(`📝 Template inserted: ${template.command}`);
 }
@@ -248,7 +240,6 @@ function processInput(input: HTMLElement): void {
 
     currentInput = input;
     showTemplateModal(template);
-    // Не очищаем поле, чтобы не ломать редактор
 }
 
 function setupInputListener(): void {
