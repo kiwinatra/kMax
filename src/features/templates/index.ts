@@ -11,6 +11,7 @@ import { Template } from './types';
 let isEnabled = false;
 let unwatch: (() => void) | null = null;
 let currentInput: HTMLElement | null = null;
+let pendingTemplate: Template | null = null;
 
 // ============================================================
 // ПОИСК ПОЛЯ ВВОДА
@@ -36,6 +37,7 @@ function findComposerInput(): HTMLElement | null {
 // ============================================================
 
 function showTemplateModal(template: Template): void {
+    pendingTemplate = template;
     const oldModal = document.querySelector('.kmod-template-modal');
     if (oldModal) oldModal.remove();
 
@@ -130,6 +132,7 @@ function showTemplateModal(template: Template): void {
     cancelBtn.onmouseleave = () => { cancelBtn.style.background = '#4e5058'; };
     cancelBtn.onclick = () => {
         overlay.remove();
+        pendingTemplate = null;
         if (currentInput) {
             currentInput.focus();
         }
@@ -151,10 +154,13 @@ function showTemplateModal(template: Template): void {
     confirmBtn.onmouseenter = () => { confirmBtn.style.background = '#34d399'; };
     confirmBtn.onmouseleave = () => { confirmBtn.style.background = '#4ade80'; };
     confirmBtn.onclick = () => {
-        overlay.remove(); // Закрываем модалку
-        // Даём время на закрытие
+        overlay.remove();
+        // Используем setTimeout, чтобы модалка успела закрыться
         setTimeout(() => {
-            insertTemplate(template);
+            if (pendingTemplate) {
+                insertTemplate(pendingTemplate);
+                pendingTemplate = null;
+            }
         }, 50);
     };
 
@@ -171,6 +177,7 @@ function showTemplateModal(template: Template): void {
     overlay.addEventListener('click', (e) => {
         if (e.target === overlay) {
             overlay.remove();
+            pendingTemplate = null;
             if (currentInput) {
                 currentInput.focus();
             }
@@ -180,6 +187,7 @@ function showTemplateModal(template: Template): void {
     const escHandler = (e: KeyboardEvent) => {
         if (e.key === 'Escape') {
             overlay.remove();
+            pendingTemplate = null;
             if (currentInput) {
                 currentInput.focus();
             }
@@ -190,29 +198,36 @@ function showTemplateModal(template: Template): void {
 }
 
 // ============================================================
-// ВСТАВКА ШАБЛОНА
+// ВСТАВКА ШАБЛОНА (прямая замена innerHTML)
 // ============================================================
 
 function insertTemplate(template: Template): void {
-    if (!currentInput) return;
-
-    const input = currentInput as HTMLElement;
-    input.focus();
-
-    // 1. Выделяем весь текст через Range
-    const sel = window.getSelection();
-    if (sel) {
-        const range = document.createRange();
-        range.selectNodeContents(input);
-        sel.removeAllRanges();
-        sel.addRange(range);
+    // Находим поле заново (на случай, если ссылка устарела)
+    const input = findComposerInput();
+    if (!input) {
+        logger.warn('Поле ввода не найдено при вставке');
+        return;
     }
 
-    // 2. Вставляем HTML с новым параграфом (заменяет выделенное)
-    document.execCommand('insertHTML', false, `<p class="paragraph" dir="auto">${template.text}</p>`);
+    // Фокусируемся
+    input.focus();
 
-    // 3. Триггерим событие input для обновления UI
+    // Очищаем поле через innerHTML (самый надёжный способ)
+    // Создаём новый параграф с текстом шаблона
+    const p = document.createElement('p');
+    p.className = 'paragraph';
+    p.dir = 'auto';
+    p.textContent = template.text;
+    
+    // Очищаем и вставляем
+    input.innerHTML = '';
+    input.appendChild(p);
+
+    // Триггерим событие input, чтобы сайт обновил состояние
     input.dispatchEvent(new Event('input', { bubbles: true }));
+
+    // Обновляем currentInput
+    currentInput = input;
 
     logger.debug(`📝 Template inserted: ${template.command}`);
 }
@@ -240,6 +255,7 @@ function processInput(input: HTMLElement): void {
 
     currentInput = input;
     showTemplateModal(template);
+    // Не очищаем поле до подтверждения
 }
 
 function setupInputListener(): void {
@@ -290,6 +306,7 @@ export function disable(): void {
 
     const modal = document.querySelector('.kmod-template-modal');
     if (modal) modal.remove();
+    pendingTemplate = null;
 
     logger.info('📝 Templates disabled');
 }
