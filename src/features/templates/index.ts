@@ -10,7 +10,7 @@ import { Template } from './types';
 
 let isEnabled = false;
 let unwatch: (() => void) | null = null;
-let modalOpen = false; // флаг, чтобы не спамить модалками
+let modalOpen = false;
 
 // ============================================================
 // ПОИСК ПОЛЯ ВВОДА
@@ -32,11 +32,11 @@ function findComposerInput(): HTMLElement | null {
 }
 
 // ============================================================
-// МОДАЛЬНОЕ ОКНО
+// КАСТОМНАЯ МОДАЛКА
 // ============================================================
 
 function showTemplateModal(template: Template): void {
-    if (modalOpen) return; // если уже открыта — не открываем новую
+    if (modalOpen) return;
     modalOpen = true;
 
     const oldModal = document.querySelector('.kmod-template-modal');
@@ -114,10 +114,8 @@ function showTemplateModal(template: Template): void {
         display: flex;
         gap: 10px;
         justify-content: flex-end;
-        flex-wrap: wrap;
     `;
 
-    // Кнопка "Копировать"
     const copyBtn = document.createElement('button');
     copyBtn.style.cssText = `
         padding: 8px 20px;
@@ -142,7 +140,6 @@ function showTemplateModal(template: Template): void {
         });
     };
 
-    // Кнопка "Закрыть"
     const closeBtn = document.createElement('button');
     closeBtn.style.cssText = `
         padding: 8px 20px;
@@ -163,27 +160,7 @@ function showTemplateModal(template: Template): void {
         modalOpen = false;
     };
 
-    // Кнопка "Вставить" (не работает)
-    const insertBtn = document.createElement('button');
-    insertBtn.style.cssText = `
-        padding: 8px 20px;
-        border-radius: 8px;
-        border: none;
-        background: #4e5058;
-        color: #f2f3f5;
-        font-size: 13px;
-        font-weight: 600;
-        cursor: pointer;
-        transition: all 0.15s;
-        opacity: 0.5;
-    `;
-    insertBtn.textContent = 'Вставить (не работает)';
-    insertBtn.onclick = () => {
-        alert('❌ Вставка не работает, простите :(\nПожалуйста, используйте кнопку "Копировать" и вставьте вручную.');
-    };
-
     btnWrapper.appendChild(copyBtn);
-    btnWrapper.appendChild(insertBtn);
     btnWrapper.appendChild(closeBtn);
 
     modal.appendChild(title);
@@ -193,7 +170,6 @@ function showTemplateModal(template: Template): void {
     overlay.appendChild(modal);
     document.body.appendChild(overlay);
 
-    // Закрытие по клику на фон
     overlay.addEventListener('click', (e) => {
         if (e.target === overlay) {
             overlay.remove();
@@ -201,7 +177,6 @@ function showTemplateModal(template: Template): void {
         }
     });
 
-    // Закрытие по Escape
     const escHandler = (e: KeyboardEvent) => {
         if (e.key === 'Escape') {
             overlay.remove();
@@ -218,7 +193,7 @@ function showTemplateModal(template: Template): void {
 
 function processInput(input: HTMLElement): void {
     if (!input) return;
-    if (modalOpen) return; // если модалка открыта — игнорируем
+    if (modalOpen) return;
 
     const text = input.textContent || '';
     if (!text.startsWith('/')) return;
@@ -234,7 +209,6 @@ function processInput(input: HTMLElement): void {
 
     if (!template) return;
 
-    // Показываем модалку
     showTemplateModal(template);
 }
 
