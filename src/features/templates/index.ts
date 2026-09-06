@@ -10,8 +10,6 @@ import { Template } from './types';
 
 let isEnabled = false;
 let unwatch: (() => void) | null = null;
-let currentInput: HTMLElement | null = null;
-let pendingTemplate: Template | null = null;
 
 // ============================================================
 // ПОИСК ПОЛЯ ВВОДА
@@ -33,201 +31,28 @@ function findComposerInput(): HTMLElement | null {
 }
 
 // ============================================================
-// МОДАЛЬНОЕ ОКНО С ШАБЛОНОМ
-// ============================================================
-
-function showTemplateModal(template: Template): void {
-    pendingTemplate = template;
-    const oldModal = document.querySelector('.kmod-template-modal');
-    if (oldModal) oldModal.remove();
-
-    const overlay = document.createElement('div');
-    overlay.className = 'kmod-template-modal';
-    overlay.style.cssText = `
-        position: fixed;
-        inset: 0;
-        background: rgba(0, 0, 0, 0.7);
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        z-index: 9999999;
-        backdrop-filter: blur(4px);
-        animation: kmodFadeScale 0.15s ease;
-    `;
-
-    const modal = document.createElement('div');
-    modal.style.cssText = `
-        background: #313338;
-        border-radius: 12px;
-        padding: 28px 32px;
-        max-width: 480px;
-        width: 90%;
-        box-shadow: 0 20px 60px rgba(0,0,0,0.6);
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        color: #dbdee1;
-        animation: kmodFadeScale 0.15s ease;
-    `;
-
-    const title = document.createElement('div');
-    title.style.cssText = `
-        font-size: 18px;
-        font-weight: 700;
-        color: #f2f3f5;
-        margin-bottom: 4px;
-    `;
-    title.textContent = '📝 Вставить шаблон';
-
-    const commandBlock = document.createElement('div');
-    commandBlock.style.cssText = `
-        background: rgba(74, 222, 128, 0.08);
-        border-radius: 6px;
-        padding: 4px 12px;
-        display: inline-block;
-        margin: 8px 0 12px 0;
-        font-family: 'JetBrains Mono', monospace;
-        font-size: 14px;
-        font-weight: 700;
-        color: #4ade80;
-    `;
-    commandBlock.textContent = template.command;
-
-    const textBlock = document.createElement('div');
-    textBlock.style.cssText = `
-        background: #2b2d31;
-        border-radius: 8px;
-        padding: 14px 16px;
-        margin: 12px 0 20px 0;
-        font-size: 15px;
-        line-height: 1.6;
-        color: #dbdee1;
-        border: 1px solid #1e1f22;
-        max-height: 200px;
-        overflow-y: auto;
-        white-space: pre-wrap;
-        word-break: break-word;
-    `;
-    textBlock.textContent = template.text;
-
-    const btnWrapper = document.createElement('div');
-    btnWrapper.style.cssText = `
-        display: flex;
-        gap: 10px;
-        justify-content: flex-end;
-    `;
-
-    const cancelBtn = document.createElement('button');
-    cancelBtn.style.cssText = `
-        padding: 8px 20px;
-        border-radius: 8px;
-        border: none;
-        background: #4e5058;
-        color: #f2f3f5;
-        font-size: 13px;
-        font-weight: 600;
-        cursor: pointer;
-        transition: all 0.15s;
-    `;
-    cancelBtn.textContent = 'Отмена';
-    cancelBtn.onmouseenter = () => { cancelBtn.style.background = '#6d6f78'; };
-    cancelBtn.onmouseleave = () => { cancelBtn.style.background = '#4e5058'; };
-    cancelBtn.onclick = () => {
-        overlay.remove();
-        pendingTemplate = null;
-        if (currentInput) {
-            currentInput.focus();
-        }
-    };
-
-    const confirmBtn = document.createElement('button');
-    confirmBtn.style.cssText = `
-        padding: 8px 24px;
-        border-radius: 8px;
-        border: none;
-        background: #4ade80;
-        color: #0a0a0f;
-        font-size: 13px;
-        font-weight: 700;
-        cursor: pointer;
-        transition: all 0.15s;
-    `;
-    confirmBtn.textContent = '✅ Вставить';
-    confirmBtn.onmouseenter = () => { confirmBtn.style.background = '#34d399'; };
-    confirmBtn.onmouseleave = () => { confirmBtn.style.background = '#4ade80'; };
-    confirmBtn.onclick = () => {
-        overlay.remove();
-        // Используем setTimeout, чтобы модалка успела закрыться
-        setTimeout(() => {
-            if (pendingTemplate) {
-                insertTemplate(pendingTemplate);
-                pendingTemplate = null;
-            }
-        }, 50);
-    };
-
-    btnWrapper.appendChild(cancelBtn);
-    btnWrapper.appendChild(confirmBtn);
-
-    modal.appendChild(title);
-    modal.appendChild(commandBlock);
-    modal.appendChild(textBlock);
-    modal.appendChild(btnWrapper);
-    overlay.appendChild(modal);
-    document.body.appendChild(overlay);
-
-    overlay.addEventListener('click', (e) => {
-        if (e.target === overlay) {
-            overlay.remove();
-            pendingTemplate = null;
-            if (currentInput) {
-                currentInput.focus();
-            }
-        }
-    });
-
-    const escHandler = (e: KeyboardEvent) => {
-        if (e.key === 'Escape') {
-            overlay.remove();
-            pendingTemplate = null;
-            if (currentInput) {
-                currentInput.focus();
-            }
-            document.removeEventListener('keydown', escHandler);
-        }
-    };
-    document.addEventListener('keydown', escHandler);
-}
-
-// ============================================================
-// ВСТАВКА ШАБЛОНА (прямая замена innerHTML)
+// ВСТАВКА ШАБЛОНА (100% рабочий способ)
 // ============================================================
 
 function insertTemplate(template: Template): void {
-    // Находим поле заново (на случай, если ссылка устарела)
     const input = findComposerInput();
     if (!input) {
-        logger.warn('Поле ввода не найдено при вставке');
+        logger.warn('Поле ввода не найдено');
         return;
     }
 
     // Фокусируемся
     input.focus();
 
-    // Очищаем поле через innerHTML (самый надёжный способ)
-    // Создаём новый параграф с текстом шаблона
-    const p = document.createElement('p');
-    p.className = 'paragraph';
-    p.dir = 'auto';
-    p.textContent = template.text;
-    
-    // Очищаем и вставляем
-    input.innerHTML = '';
-    input.appendChild(p);
+    // 1. Очищаем поле через innerHTML (самый надёжный способ)
+    // Создаём пустой параграф, чтобы Lexical не сломался
+    input.innerHTML = '<p class="paragraph" dir="auto"><br></p>';
 
-    // Триггерим событие input, чтобы сайт обновил состояние
+    // 2. Вставляем текст через execCommand (работает всегда!)
+    document.execCommand('insertText', false, template.text);
+
+    // 3. Триггерим событие для обновления UI
     input.dispatchEvent(new Event('input', { bubbles: true }));
-
-    // Обновляем currentInput
-    currentInput = input;
 
     logger.debug(`📝 Template inserted: ${template.command}`);
 }
@@ -253,9 +78,14 @@ function processInput(input: HTMLElement): void {
 
     if (!template) return;
 
-    currentInput = input;
-    showTemplateModal(template);
-    // Не очищаем поле до подтверждения
+    // Показываем стандартный confirm (всегда работает)
+    if (confirm(`Вставить шаблон "${template.command}"?\n\n${template.text}`)) {
+        insertTemplate(template);
+    } else {
+        // Если отмена — просто удаляем команду из поля
+        input.innerHTML = '<p class="paragraph" dir="auto"><br></p>';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+    }
 }
 
 function setupInputListener(): void {
@@ -303,10 +133,6 @@ export function disable(): void {
         unwatch();
         unwatch = null;
     }
-
-    const modal = document.querySelector('.kmod-template-modal');
-    if (modal) modal.remove();
-    pendingTemplate = null;
 
     logger.info('📝 Templates disabled');
 }
