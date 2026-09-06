@@ -230,22 +230,14 @@ function insertTemplate(template: Template): void {
     const input = currentInput as HTMLElement;
     input.focus();
 
-    // Очищаем поле
-    clearLexicalInput(input);
+    // 1. Выделяем всё содержимое поля
+    document.execCommand('selectAll', false);
 
-    // Вставляем текст через paste
-    const pasteEvent = new ClipboardEvent('paste', {
-        bubbles: true,
-        cancelable: true,
-        clipboardData: new DataTransfer()
-    });
-    pasteEvent.clipboardData?.setData('text/plain', template.text);
-    input.dispatchEvent(pasteEvent);
+    // 2. Вставляем текст, заменяя выделенное
+    document.execCommand('insertText', false, template.text);
 
-    // Небольшая задержка для обновления UI
-    setTimeout(() => {
-        input.dispatchEvent(new Event('input', { bubbles: true }));
-    }, 10);
+    // 3. Триггерим событие input для обновления UI
+    input.dispatchEvent(new Event('input', { bubbles: true }));
 
     logger.debug(`📝 Template inserted: ${template.command}`);
 }
