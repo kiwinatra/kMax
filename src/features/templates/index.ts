@@ -11,7 +11,6 @@ import { Template } from './types';
 let isEnabled = false;
 let unwatch: (() => void) | null = null;
 let currentInput: HTMLElement | null = null;
-let isProcessing = false;
 
 // ============================================================
 // ПОИСК ПОЛЯ ВВОДА
@@ -152,8 +151,11 @@ function showTemplateModal(template: Template): void {
     confirmBtn.onmouseenter = () => { confirmBtn.style.background = '#34d399'; };
     confirmBtn.onmouseleave = () => { confirmBtn.style.background = '#4ade80'; };
     confirmBtn.onclick = () => {
-        overlay.remove();
-        insertTemplate(template);
+        overlay.remove(); // Закрываем модалку
+        // Небольшая задержка, чтобы фокус вернулся на поле
+        setTimeout(() => {
+            insertTemplate(template);
+        }, 50);
     };
 
     btnWrapper.appendChild(cancelBtn);
@@ -188,39 +190,6 @@ function showTemplateModal(template: Template): void {
 }
 
 // ============================================================
-// ОЧИСТКА ПОЛЯ (без рекурсии)
-// ============================================================
-
-function clearLexicalInput(input: HTMLElement): void {
-    if (isProcessing) return;
-    isProcessing = true;
-
-    try {
-        input.focus();
-        const sel = window.getSelection();
-        if (!sel) {
-            input.innerHTML = '<p class="paragraph" dir="auto"><br></p>';
-            return;
-        }
-        const range = document.createRange();
-        range.selectNodeContents(input);
-        sel.removeAllRanges();
-        sel.addRange(range);
-
-        const backspaceEvent = new KeyboardEvent('keydown', {
-            key: 'Backspace',
-            bubbles: true,
-            cancelable: true
-        });
-        input.dispatchEvent(backspaceEvent);
-    } catch (e) {
-        input.innerHTML = '<p class="paragraph" dir="auto"><br></p>';
-    } finally {
-        isProcessing = false;
-    }
-}
-
-// ============================================================
 // ВСТАВКА ШАБЛОНА
 // ============================================================
 
@@ -231,13 +200,27 @@ function insertTemplate(template: Template): void {
     input.focus();
 
     // 1. Выделяем всё содержимое поля
-    document.execCommand('selectAll', false);
+    const sel = window.getSelection();
+    if (sel) {
+        const range = document.createRange();
+        range.selectNodeContents(input);
+        sel.removeAllRanges();
+        sel.addRange(range);
+    }
 
-    // 2. Вставляем текст, заменяя выделенное
-    document.execCommand('insertText', false, template.text);
+    // 2. Вставляем текст через paste (работает с Lexical)
+    const pasteEvent = new ClipboardEvent('paste', {
+        bubbles: true,
+        cancelable: true,
+        clipboardData: new DataTransfer()
+    });
+    pasteEvent.clipboardData?.setData('text/plain', template.text);
+    input.dispatchEvent(pasteEvent);
 
     // 3. Триггерим событие input для обновления UI
-    input.dispatchEvent(new Event('input', { bubbles: true }));
+    setTimeout(() => {
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+    }, 10);
 
     logger.debug(`📝 Template inserted: ${template.command}`);
 }
@@ -248,7 +231,6 @@ function insertTemplate(template: Template): void {
 
 function processInput(input: HTMLElement): void {
     if (!input) return;
-    if (isProcessing) return;
 
     const text = input.textContent || '';
     if (!text.startsWith('/')) return;
@@ -266,7 +248,7 @@ function processInput(input: HTMLElement): void {
 
     currentInput = input;
     showTemplateModal(template);
-    // НЕ очищаем поле здесь, чтобы не вызывать рекурсию
+    // Не очищаем поле, чтобы не ломать редактор
 }
 
 function setupInputListener(): void {
@@ -315,7 +297,6 @@ export function disable(): void {
         unwatch = null;
     }
 
-    // Удаляем модалку, если она открыта
     const modal = document.querySelector('.kmod-template-modal');
     if (modal) modal.remove();
 
