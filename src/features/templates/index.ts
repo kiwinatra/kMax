@@ -10,137 +10,219 @@ import { Template } from './types';
 
 let isEnabled = false;
 let unwatch: (() => void) | null = null;
+let modalOpen = false; // флаг, чтобы не спамить модалками
 
 // ============================================================
-// ПОИСК ПОЛЯ ВВОДА (расширенный)
+// ПОИСК ПОЛЯ ВВОДА
 // ============================================================
 
 function findComposerInput(): HTMLElement | null {
-    // Селекторы для самых популярных редакторов
     const selectors = [
         OFFSETS.classes.composerInput,
-        '.contenteditable.svelte-1k31az8',     // Twitter / X
-        '.composer [contenteditable="true"]',  // LinkedIn
-        '[contenteditable="true"]',            // универсальный
-        '.notion-editable',                    // Notion
-        '.DraftEditor-editorContainer',        // Draft.js
-        '.lexical-editor',                     // Lexical
-        '.ql-editor',                          // Quill
-        '.ProseMirror',                        // ProseMirror
-        '[role="textbox"]',                    // общий fallback
+        '.contenteditable.svelte-1k31az8',
+        '.composer [contenteditable="true"]',
+        '[contenteditable="true"]',
     ];
     
     for (const selector of selectors) {
         const el = qs<HTMLElement>(selector);
-        if (el && el.isContentEditable) return el;
+        if (el) return el;
     }
     return null;
 }
 
 // ============================================================
-// ВСТАВКА ТЕКСТА (надёжный способ)
+// МОДАЛЬНОЕ ОКНО
 // ============================================================
 
-function insertTextAtCursor(text: string, input: HTMLElement): boolean {
-    try {
-        // Фокусируемся и ставим курсор в конец (если не был)
-        input.focus();
+function showTemplateModal(template: Template): void {
+    if (modalOpen) return; // если уже открыта — не открываем новую
+    modalOpen = true;
 
-        // 1. Пытаемся использовать execCommand (самый надёжный)
-        if (document.execCommand) {
-            const success = document.execCommand('insertText', false, text);
-            if (success) {
-                logger.debug('✅ Вставка через execCommand');
-                return true;
-            }
+    const oldModal = document.querySelector('.kmod-template-modal');
+    if (oldModal) oldModal.remove();
+
+    const overlay = document.createElement('div');
+    overlay.className = 'kmod-template-modal';
+    overlay.style.cssText = `
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.7);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        z-index: 9999999;
+        backdrop-filter: blur(4px);
+        animation: kmodFadeScale 0.15s ease;
+    `;
+
+    const modal = document.createElement('div');
+    modal.style.cssText = `
+        background: #313338;
+        border-radius: 12px;
+        padding: 28px 32px;
+        max-width: 480px;
+        width: 90%;
+        box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        color: #dbdee1;
+        animation: kmodFadeScale 0.15s ease;
+    `;
+
+    const title = document.createElement('div');
+    title.style.cssText = `
+        font-size: 18px;
+        font-weight: 700;
+        color: #f2f3f5;
+        margin-bottom: 4px;
+    `;
+    title.textContent = '📝 Шаблон';
+
+    const commandBlock = document.createElement('div');
+    commandBlock.style.cssText = `
+        background: rgba(74, 222, 128, 0.08);
+        border-radius: 6px;
+        padding: 4px 12px;
+        display: inline-block;
+        margin: 8px 0 12px 0;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 14px;
+        font-weight: 700;
+        color: #4ade80;
+    `;
+    commandBlock.textContent = template.command;
+
+    const textBlock = document.createElement('div');
+    textBlock.style.cssText = `
+        background: #2b2d31;
+        border-radius: 8px;
+        padding: 14px 16px;
+        margin: 12px 0 20px 0;
+        font-size: 15px;
+        line-height: 1.6;
+        color: #dbdee1;
+        border: 1px solid #1e1f22;
+        max-height: 200px;
+        overflow-y: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+    `;
+    textBlock.textContent = template.text;
+
+    const btnWrapper = document.createElement('div');
+    btnWrapper.style.cssText = `
+        display: flex;
+        gap: 10px;
+        justify-content: flex-end;
+        flex-wrap: wrap;
+    `;
+
+    // Кнопка "Копировать"
+    const copyBtn = document.createElement('button');
+    copyBtn.style.cssText = `
+        padding: 8px 20px;
+        border-radius: 8px;
+        border: none;
+        background: #5865f2;
+        color: #fff;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.15s;
+    `;
+    copyBtn.textContent = '📋 Копировать';
+    copyBtn.onmouseenter = () => { copyBtn.style.background = '#4752c4'; };
+    copyBtn.onmouseleave = () => { copyBtn.style.background = '#5865f2'; };
+    copyBtn.onclick = () => {
+        navigator.clipboard.writeText(template.text).then(() => {
+            copyBtn.textContent = '✅ Скопировано!';
+            setTimeout(() => { copyBtn.textContent = '📋 Копировать'; }, 2000);
+        }).catch(() => {
+            alert('Не удалось скопировать текст');
+        });
+    };
+
+    // Кнопка "Закрыть"
+    const closeBtn = document.createElement('button');
+    closeBtn.style.cssText = `
+        padding: 8px 20px;
+        border-radius: 8px;
+        border: none;
+        background: #4e5058;
+        color: #f2f3f5;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.15s;
+    `;
+    closeBtn.textContent = 'Закрыть';
+    closeBtn.onmouseenter = () => { closeBtn.style.background = '#6d6f78'; };
+    closeBtn.onmouseleave = () => { closeBtn.style.background = '#4e5058'; };
+    closeBtn.onclick = () => {
+        overlay.remove();
+        modalOpen = false;
+    };
+
+    // Кнопка "Вставить" (не работает)
+    const insertBtn = document.createElement('button');
+    insertBtn.style.cssText = `
+        padding: 8px 20px;
+        border-radius: 8px;
+        border: none;
+        background: #4e5058;
+        color: #f2f3f5;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.15s;
+        opacity: 0.5;
+    `;
+    insertBtn.textContent = 'Вставить (не работает)';
+    insertBtn.onclick = () => {
+        alert('❌ Вставка не работает, простите :(\nПожалуйста, используйте кнопку "Копировать" и вставьте вручную.');
+    };
+
+    btnWrapper.appendChild(copyBtn);
+    btnWrapper.appendChild(insertBtn);
+    btnWrapper.appendChild(closeBtn);
+
+    modal.appendChild(title);
+    modal.appendChild(commandBlock);
+    modal.appendChild(textBlock);
+    modal.appendChild(btnWrapper);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    // Закрытие по клику на фон
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) {
+            overlay.remove();
+            modalOpen = false;
         }
+    });
 
-        // 2. Запасной вариант – через Range и Selection
-        const sel = window.getSelection();
-        if (sel && sel.rangeCount > 0) {
-            const range = sel.getRangeAt(0);
-            range.deleteContents();            // удаляем выделенное (команду)
-            const textNode = document.createTextNode(text);
-            range.insertNode(textNode);
-            // перемещаем курсор после вставленного текста
-            range.setStartAfter(textNode);
-            range.collapse(true);
-            sel.removeAllRanges();
-            sel.addRange(range);
-            logger.debug('✅ Вставка через Range');
-            return true;
+    // Закрытие по Escape
+    const escHandler = (e: KeyboardEvent) => {
+        if (e.key === 'Escape') {
+            overlay.remove();
+            modalOpen = false;
+            document.removeEventListener('keydown', escHandler);
         }
-
-        // 3. Самый крайний случай – просто заменяем innerHTML (но это может сломать редактор)
-        input.innerHTML = text;
-        logger.warn('⚠️ Использован fallback innerHTML');
-        return true;
-    } catch (e) {
-        logger.error('❌ Ошибка вставки:', e);
-        return false;
-    }
+    };
+    document.addEventListener('keydown', escHandler);
 }
 
-function insertTemplate(template: Template): void {
-    const input = findComposerInput();
-    if (!input) {
-        logger.warn('Поле ввода не найдено');
-        return;
-    }
-
-    // Проверяем, что поле редактируемо и не заблокировано
-    if (input.hasAttribute('readonly') || input.getAttribute('contenteditable') === 'false') {
-        logger.warn('Поле ввода не редактируемо');
-        return;
-    }
-
-    // Удаляем команду (очищаем только её, а не всё поле)
-    // Предполагаем, что команда находится в начале поля
-    // Если хотите поддерживать команду в любом месте – нужно более сложное выделение
-    // Для простоты оставляем вариант с очисткой всего поля (т.к. команда обычно в начале)
-    // Но мы можем удалить только текст до команды (он пуст) и вставить шаблон.
-    // Если в поле был другой текст до команды – мы его сохраним.
-    // В текущей логике команда должна быть в начале, поэтому заменяем всё.
-    // Чтобы улучшить, можно использовать выделение для удаления команды.
-    // Но для простоты оставляем как есть.
-
-    // Вставляем текст
-    const success = insertTextAtCursor(template.text, input);
-    if (!success) {
-        logger.error('Не удалось вставить текст');
-        return;
-    }
-
-    // Триггерим все необходимые события, чтобы редактор обновился
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    input.dispatchEvent(new Event('change', { bubbles: true }));
-    input.dispatchEvent(new Event('blur', { bubbles: true })); // иногда помогает
-
-    logger.debug(`📝 Шаблон "${template.command}" вставлен`);
-}
-
 // ============================================================
-// ОБРАБОТКА ВВОДА (с поддержкой команд)
+// ОБРАБОТКА ВВОДА
 // ============================================================
-
-// Кэш для предотвращения повторного срабатывания на одно и то же изменение
-let lastProcessedText = '';
 
 function processInput(input: HTMLElement): void {
     if (!input) return;
+    if (modalOpen) return; // если модалка открыта — игнорируем
 
     const text = input.textContent || '';
-    // Игнорируем, если не начинается с '/'
-    if (!text.startsWith('/')) {
-        lastProcessedText = '';
-        return;
-    }
+    if (!text.startsWith('/')) return;
 
-    // Не обрабатываем одну и ту же команду дважды
-    if (text === lastProcessedText) return;
-    lastProcessedText = text;
-
-    // Ищем команду
     const match = text.match(/^\/(\w*)/);
     if (!match) return;
 
@@ -152,63 +234,19 @@ function processInput(input: HTMLElement): void {
 
     if (!template) return;
 
-    // Показываем подтверждение
-    if (confirm(`Вставить шаблон "${template.command}"?\n\n${template.text}`)) {
-        insertTemplate(template);
-    } else {
-        // Отмена – удаляем только команду, а не всё поле
-        // Если пользователь уже что-то написал до команды, то после удаления команды останется только этот текст
-        // Но у нас команда в начале, так что удаляем всё.
-        // Для улучшения можно было бы сохранить текст до команды, но сейчас проще.
-        input.innerHTML = '<p class="paragraph" dir="auto"><br></p>';
-        input.dispatchEvent(new Event('input', { bubbles: true }));
-        logger.debug('Команда удалена');
-    }
-
-    // Сбрасываем кэш, чтобы можно было ввести новую команду
-    lastProcessedText = '';
+    // Показываем модалку
+    showTemplateModal(template);
 }
-
-// ============================================================
-// ПОДКЛЮЧЕНИЕ СЛУШАТЕЛЯ
-// ============================================================
 
 function setupInputListener(): void {
     const input = findComposerInput();
-    if (!input) {
-        logger.debug('Поле ввода не найдено, слушатель не установлен');
-        return;
-    }
+    if (!input) return;
 
-    // Удаляем старые обработчики, чтобы не было дублей
     input.removeEventListener('input', inputHandler);
-    input.removeEventListener('compositionstart', compositionStartHandler);
-    input.removeEventListener('compositionend', compositionEndHandler);
-
-    // Добавляем обработчики
     input.addEventListener('input', inputHandler);
-    input.addEventListener('compositionstart', compositionStartHandler);
-    input.addEventListener('compositionend', compositionEndHandler);
-
-    logger.debug('🎧 Слушатель поля ввода установлен');
-}
-
-// Флаг для обработки составных символов (IME)
-let isComposing = false;
-
-function compositionStartHandler() {
-    isComposing = true;
-}
-
-function compositionEndHandler() {
-    isComposing = false;
-    // После завершения композиции вызываем обработчик вручную (если нужно)
-    const input = findComposerInput();
-    if (input) processInput(input);
 }
 
 function inputHandler(e: Event): void {
-    if (isComposing) return; // игнорируем события во время ввода IME
     const input = e.target as HTMLElement;
     if (input) processInput(input);
 }
@@ -246,13 +284,9 @@ export function disable(): void {
         unwatch = null;
     }
 
-    // Отключаем слушатели
-    const input = findComposerInput();
-    if (input) {
-        input.removeEventListener('input', inputHandler);
-        input.removeEventListener('compositionstart', compositionStartHandler);
-        input.removeEventListener('compositionend', compositionEndHandler);
-    }
+    const modal = document.querySelector('.kmod-template-modal');
+    if (modal) modal.remove();
+    modalOpen = false;
 
     logger.info('📝 Templates disabled');
 }
