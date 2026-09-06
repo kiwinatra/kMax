@@ -5,13 +5,13 @@ import { storage } from '../../core/storage';
 import { watchDOM } from '../../core/observer';
 import { qs, createElement } from '../../core/dom';
 import { OFFSETS } from '../../offsets';
-import { getAllTemplates, getTemplateByCommand } from './storage';
+import { getAllTemplates } from './storage';
 import { Template } from './types';
 
 let isEnabled = false;
 let unwatch: (() => void) | null = null;
 let currentInput: HTMLElement | null = null;
-let lastCommand = '';
+let isProcessing = false; // ← ФЛАГ ДЛЯ ЗАЩИТЫ ОТ РЕКУРСИИ
 
 // ============================================================
 // ПОИСК ПОЛЯ ВВОДА
@@ -37,7 +37,6 @@ function findComposerInput(): HTMLElement | null {
 // ============================================================
 
 function showTemplateModal(template: Template): void {
-    // Удаляем старую модалку, если есть
     const oldModal = document.querySelector('.kmod-template-modal');
     if (oldModal) oldModal.remove();
 
@@ -68,7 +67,6 @@ function showTemplateModal(template: Template): void {
         animation: kmodFadeScale 0.15s ease;
     `;
 
-    // Заголовок
     const title = document.createElement('div');
     title.style.cssText = `
         font-size: 18px;
@@ -78,7 +76,6 @@ function showTemplateModal(template: Template): void {
     `;
     title.textContent = '📝 Вставить шаблон';
 
-    // Команда
     const commandBlock = document.createElement('div');
     commandBlock.style.cssText = `
         background: rgba(74, 222, 128, 0.08);
@@ -93,7 +90,6 @@ function showTemplateModal(template: Template): void {
     `;
     commandBlock.textContent = template.command;
 
-    // Текст шаблона (большой блок)
     const textBlock = document.createElement('div');
     textBlock.style.cssText = `
         background: #2b2d31;
@@ -111,7 +107,6 @@ function showTemplateModal(template: Template): void {
     `;
     textBlock.textContent = template.text;
 
-    // Кнопки
     const btnWrapper = document.createElement('div');
     btnWrapper.style.cssText = `
         display: flex;
@@ -136,7 +131,6 @@ function showTemplateModal(template: Template): void {
     cancelBtn.onmouseleave = () => { cancelBtn.style.background = '#4e5058'; };
     cancelBtn.onclick = () => {
         overlay.remove();
-        // Возвращаем курсор в поле
         if (currentInput) {
             currentInput.focus();
         }
@@ -172,7 +166,6 @@ function showTemplateModal(template: Template): void {
     overlay.appendChild(modal);
     document.body.appendChild(overlay);
 
-    // Закрытие по клику на оверлей
     overlay.addEventListener('click', (e) => {
         if (e.target === overlay) {
             overlay.remove();
@@ -182,7 +175,6 @@ function showTemplateModal(template: Template): void {
         }
     });
 
-    // Закрытие по Escape
     const escHandler = (e: KeyboardEvent) => {
         if (e.key === 'Escape') {
             overlay.remove();
@@ -205,10 +197,8 @@ function insertTemplate(template: Template): void {
     const input = currentInput as HTMLElement;
     input.focus();
     
-    // Очищаем поле (рабочий способ через Ctrl+A + Backspace)
     clearLexicalInput(input);
     
-    // Вставляем текст через paste
     const pasteEvent = new ClipboardEvent('paste', {
         bubbles: true,
         cancelable: true,
@@ -224,14 +214,18 @@ function insertTemplate(template: Template): void {
     logger.debug(`📝 Template inserted: ${template.command}`);
 }
 
+// ============================================================
+// ОЧИСТКА ПОЛЯ (без рекурсии)
+// ============================================================
+
 function clearLexicalInput(input: HTMLElement): void {
+    if (isProcessing) return; // ← ЗАЩИТА ОТ РЕКУРСИИ
+    isProcessing = true;
+    
     try {
         input.focus();
-        
-        // Выделяем весь текст (Ctrl+A)
         const sel = window.getSelection();
         if (!sel) {
-            // fallback
             input.innerHTML = '<p class="paragraph" dir="auto"><br></p>';
             input.dispatchEvent(new Event('input', { bubbles: true }));
             return;
@@ -241,7 +235,6 @@ function clearLexicalInput(input: HTMLElement): void {
         sel.removeAllRanges();
         sel.addRange(range);
         
-        // Симулируем Backspace
         const backspaceEvent = new KeyboardEvent('keydown', {
             key: 'Backspace',
             bubbles: true,
@@ -251,9 +244,10 @@ function clearLexicalInput(input: HTMLElement): void {
         
         input.dispatchEvent(new Event('input', { bubbles: true }));
     } catch (e) {
-        // fallback
         input.innerHTML = '<p class="paragraph" dir="auto"><br></p>';
         input.dispatchEvent(new Event('input', { bubbles: true }));
+    } finally {
+        isProcessing = false; // ← СБРАСЫВАЕМ ФЛАГ
     }
 }
 
@@ -263,19 +257,15 @@ function clearLexicalInput(input: HTMLElement): void {
 
 function processInput(input: HTMLElement): void {
     if (!input) return;
+    if (isProcessing) return; // ← НЕ ОБРАБАТЫВАЕМ, ЕСЛИ ИДЁТ ОЧИСТКА
     
     const text = input.textContent || '';
-    
-    // Проверяем, начинается ли с "/" и совпадает ли с командой
     if (!text.startsWith('/')) return;
     
-    // Извлекаем команду
     const match = text.match(/^\/(\w*)/);
     if (!match) return;
     
     const fullCommand = '/' + match[1];
-    
-    // Ищем точное совпадение команды (не префикс)
     const allTemplates = getAllTemplates();
     const template = allTemplates.find(t => 
         t.command.toLowerCase() === fullCommand.toLowerCase()
@@ -283,13 +273,8 @@ function processInput(input: HTMLElement): void {
     
     if (!template) return;
     
-    // Сохраняем текущее поле ввода
     currentInput = input;
-    
-    // Показываем модалку
     showTemplateModal(template);
-    
-    // Очищаем поле от команды (чтобы не оставалось /kmax)
     clearLexicalInput(input);
 }
 
