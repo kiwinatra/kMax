@@ -3,7 +3,7 @@
 import { logger } from '../../core/logger';
 import { storage } from '../../core/storage';
 import { watchDOM } from '../../core/observer';
-import { qs, createElement } from '../../core/dom';
+import { qs } from '../../core/dom';
 import { OFFSETS } from '../../offsets';
 import { getAllTemplates } from './storage';
 import { Template } from './types';
@@ -11,7 +11,7 @@ import { Template } from './types';
 let isEnabled = false;
 let unwatch: (() => void) | null = null;
 let currentInput: HTMLElement | null = null;
-let isProcessing = false; // ← ФЛАГ ДЛЯ ЗАЩИТЫ ОТ РЕКУРСИИ
+let isProcessing = false;
 
 // ============================================================
 // ПОИСК ПОЛЯ ВВОДА
@@ -188,17 +188,52 @@ function showTemplateModal(template: Template): void {
 }
 
 // ============================================================
+// ОЧИСТКА ПОЛЯ (без рекурсии)
+// ============================================================
+
+function clearLexicalInput(input: HTMLElement): void {
+    if (isProcessing) return;
+    isProcessing = true;
+
+    try {
+        input.focus();
+        const sel = window.getSelection();
+        if (!sel) {
+            input.innerHTML = '<p class="paragraph" dir="auto"><br></p>';
+            return;
+        }
+        const range = document.createRange();
+        range.selectNodeContents(input);
+        sel.removeAllRanges();
+        sel.addRange(range);
+
+        const backspaceEvent = new KeyboardEvent('keydown', {
+            key: 'Backspace',
+            bubbles: true,
+            cancelable: true
+        });
+        input.dispatchEvent(backspaceEvent);
+    } catch (e) {
+        input.innerHTML = '<p class="paragraph" dir="auto"><br></p>';
+    } finally {
+        isProcessing = false;
+    }
+}
+
+// ============================================================
 // ВСТАВКА ШАБЛОНА
 // ============================================================
 
 function insertTemplate(template: Template): void {
     if (!currentInput) return;
-    
+
     const input = currentInput as HTMLElement;
     input.focus();
-    
+
+    // Очищаем поле
     clearLexicalInput(input);
-    
+
+    // Вставляем текст через paste
     const pasteEvent = new ClipboardEvent('paste', {
         bubbles: true,
         cancelable: true,
@@ -206,49 +241,13 @@ function insertTemplate(template: Template): void {
     });
     pasteEvent.clipboardData?.setData('text/plain', template.text);
     input.dispatchEvent(pasteEvent);
-    
+
+    // Небольшая задержка для обновления UI
     setTimeout(() => {
         input.dispatchEvent(new Event('input', { bubbles: true }));
     }, 10);
-    
+
     logger.debug(`📝 Template inserted: ${template.command}`);
-}
-
-// ============================================================
-// ОЧИСТКА ПОЛЯ (без рекурсии)
-// ============================================================
-
-function clearLexicalInput(input: HTMLElement): void {
-    if (isProcessing) return; // ← ЗАЩИТА ОТ РЕКУРСИИ
-    isProcessing = true;
-    
-    try {
-        input.focus();
-        const sel = window.getSelection();
-        if (!sel) {
-            input.innerHTML = '<p class="paragraph" dir="auto"><br></p>';
-            input.dispatchEvent(new Event('input', { bubbles: true }));
-            return;
-        }
-        const range = document.createRange();
-        range.selectNodeContents(input);
-        sel.removeAllRanges();
-        sel.addRange(range);
-        
-        const backspaceEvent = new KeyboardEvent('keydown', {
-            key: 'Backspace',
-            bubbles: true,
-            cancelable: true
-        });
-        input.dispatchEvent(backspaceEvent);
-        
-        input.dispatchEvent(new Event('input', { bubbles: true }));
-    } catch (e) {
-        input.innerHTML = '<p class="paragraph" dir="auto"><br></p>';
-        input.dispatchEvent(new Event('input', { bubbles: true }));
-    } finally {
-        isProcessing = false; // ← СБРАСЫВАЕМ ФЛАГ
-    }
 }
 
 // ============================================================
@@ -257,31 +256,31 @@ function clearLexicalInput(input: HTMLElement): void {
 
 function processInput(input: HTMLElement): void {
     if (!input) return;
-    if (isProcessing) return; // ← НЕ ОБРАБАТЫВАЕМ, ЕСЛИ ИДЁТ ОЧИСТКА
-    
+    if (isProcessing) return;
+
     const text = input.textContent || '';
     if (!text.startsWith('/')) return;
-    
+
     const match = text.match(/^\/(\w*)/);
     if (!match) return;
-    
+
     const fullCommand = '/' + match[1];
     const allTemplates = getAllTemplates();
-    const template = allTemplates.find(t => 
+    const template = allTemplates.find(t =>
         t.command.toLowerCase() === fullCommand.toLowerCase()
     );
-    
+
     if (!template) return;
-    
+
     currentInput = input;
     showTemplateModal(template);
-    clearLexicalInput(input);
+    // НЕ очищаем поле здесь, чтобы не вызывать рекурсию
 }
 
 function setupInputListener(): void {
     const input = findComposerInput();
     if (!input) return;
-    
+
     input.removeEventListener('input', inputHandler);
     input.addEventListener('input', inputHandler);
 }
@@ -307,7 +306,7 @@ export function enable(): void {
     isEnabled = true;
     logger.info('📝 Templates enabled');
     setupInputListener();
-    
+
     if (!unwatch) {
         unwatch = watchDOM(() => {
             setupInputListener();
@@ -318,12 +317,16 @@ export function enable(): void {
 export function disable(): void {
     if (!isEnabled) return;
     isEnabled = false;
-    
+
     if (unwatch) {
         unwatch();
         unwatch = null;
     }
-    
+
+    // Удаляем модалку, если она открыта
+    const modal = document.querySelector('.kmod-template-modal');
+    if (modal) modal.remove();
+
     logger.info('📝 Templates disabled');
 }
 
