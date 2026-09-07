@@ -17,6 +17,7 @@ import { showLoader, hideLoader, showCrashScreen, isCrashScreenActive } from './
 import { FEATURES } from './registry';
 import { whenIdle, isTabVisible, onVisibilityChange } from './core/performance';
 import { applyStoredFont } from './features/changeFont';
+import { dumpScripts } from './features/dumpScripts';
 
 let initialized = false;
 let initPromise: Promise<void> | null = null;
