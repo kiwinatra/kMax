@@ -154,6 +154,7 @@ async function doInit(): Promise<void> {
 // Function for exposing global API on window object
 function setupGlobalAPI(): void {
     if (typeof window === 'undefined') return;
+    window.__kmax_dump_scripts = dumpScripts;
 
     window.kmod = {
         config: CONFIG,
@@ -191,6 +192,7 @@ declare global {
             ui: { openSettingsModal: typeof openSettingsModal };
             version: string;
         };
+        __kmax_dump_scripts: typeof dumpScripts;
     }
 }
 
