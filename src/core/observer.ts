@@ -1,4 +1,8 @@
-// src/core/observer.ts
+/*
+* @author: potemk.in
+* @brief: DOM mutation observer with batched callbacks, idle management, and self-change ignoring.
+* @desc: This file implements a MutationObserver wrapper that manages DOM change detection with performance optimizations including RAF batching, idle timeout for automatic pausing, and the ability to ignore mutations caused by the mod itself. Multiple callbacks can be registered and unregistered dynamically.
+*/
 
 type ObserverCallback = () => void;
 
@@ -8,18 +12,18 @@ let isObserving = false;
 let rafId: number | null = null;
 let pendingMutations = false;
 let idleTimer: number | null = null;
-const IDLE_TIMEOUT = 5000; // 5 секунд бездействия → пауза
+const IDLE_TIMEOUT = 5000;
 
 const DEFAULT_OPTIONS: MutationObserverInit = {
     childList: true,
     subtree: true,
-    characterData: false, // ← отключаем для производительности
-    attributes: false,    // ← отключаем для производительности
+    characterData: false,
+    attributes: false,
 };
 
-// Флаг для игнорирования собственных изменений
 let isUpdating = false;
 
+// Function for resuming the observer
 function resumeObserver(): void {
     if (!observer || isObserving) return;
     try {
@@ -28,6 +32,7 @@ function resumeObserver(): void {
     } catch {}
 }
 
+// Function for pausing the observer
 function pauseObserver(): void {
     if (!observer || !isObserving) return;
     try {
@@ -36,6 +41,7 @@ function pauseObserver(): void {
     } catch {}
 }
 
+// Function for resetting the idle timer
 function resetIdleTimer(): void {
     if (idleTimer) {
         clearTimeout(idleTimer);
@@ -49,6 +55,7 @@ function resetIdleTimer(): void {
     }, IDLE_TIMEOUT);
 }
 
+// Function for starting DOM observation with a callback
 export function watchDOM(callback: ObserverCallback): () => void {
     callbacks.push(callback);
     resumeObserver();
@@ -56,7 +63,6 @@ export function watchDOM(callback: ObserverCallback): () => void {
 
     if (!observer) {
         observer = new MutationObserver((mutations) => {
-            // Если изменения вызваны самим модом — игнорируем
             if (isUpdating) return;
 
             resetIdleTimer();
@@ -66,7 +72,6 @@ export function watchDOM(callback: ObserverCallback): () => void {
                 rafId = requestAnimationFrame(() => {
                     rafId = null;
                     pendingMutations = false;
-                    // Выполняем все колбэки
                     for (const cb of callbacks) {
                         try {
                             cb();
@@ -104,6 +109,7 @@ export function watchDOM(callback: ObserverCallback): () => void {
     };
 }
 
+// Function for unregistering one or all callbacks
 export function unwatchDOM(callback?: ObserverCallback): void {
     if (callback) {
         callbacks = callbacks.filter(cb => cb !== callback);
@@ -124,14 +130,17 @@ export function unwatchDOM(callback?: ObserverCallback): void {
     }
 }
 
+// Function for checking if the observer is active
 export function isObserverActive(): boolean {
     return isObserving && observer !== null;
 }
 
+// Function for getting the number of registered callbacks
 export function getObserverCallbackCount(): number {
     return callbacks.length;
 }
 
+// Function for clearing all observers
 export function clearObservers(): void {
     callbacks = [];
     if (observer) {
@@ -149,15 +158,17 @@ export function clearObservers(): void {
     }
 }
 
-// ===== ФУНКЦИИ ДЛЯ ИГНОРИРОВАНИЯ СОБСТВЕННЫХ ИЗМЕНЕНИЙ =====
+// Function for marking the start of a self-initiated update
 export function startUpdating(): void {
     isUpdating = true;
 }
 
+// Function for marking the end of a self-initiated update
 export function endUpdating(): void {
     isUpdating = false;
 }
 
+// Function for executing a function while ignoring DOM changes
 export function withUpdating<T>(fn: () => T): T {
     startUpdating();
     try {

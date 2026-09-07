@@ -1,4 +1,8 @@
-// src/core/logger.ts
+/*
+* @author: potemk.in
+* @brief: Logger utility for consistent console logging with color-coded levels and performance tracking.
+* @desc: This file provides a logging system with support for debug, info, warn, and error levels, color-coded output, enable/disable toggling, group logging, table output, error stack logging, and performance timing for both synchronous and asynchronous operations.
+*/
 
 type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
@@ -11,61 +15,64 @@ const COLORS = {
     error: '#f87171',
 };
 
-// Флаг для включения/отключения логов (можно вынести в storage)
 let isEnabled = true;
 
 export const logger = {
-    /**
-     * Включить/выключить логирование
-     */
+    // Function for enabling or disabling logging
     setEnabled(enabled: boolean): void {
         isEnabled = enabled;
     },
 
+    // Function for logging debug messages
     debug(...args: unknown[]): void {
         if (!isEnabled) return;
         this.log('debug', ...args);
     },
 
+    // Function for logging info messages
     info(...args: unknown[]): void {
         if (!isEnabled) return;
         this.log('info', ...args);
     },
 
+    // Function for logging warning messages
     warn(...args: unknown[]): void {
         if (!isEnabled) return;
         this.log('warn', ...args);
     },
 
+    // Function for logging error messages
     error(...args: unknown[]): void {
         if (!isEnabled) return;
         this.log('error', ...args);
     },
 
+    // Function for logging with a specific level
     log(level: LogLevel, ...args: unknown[]): void {
         if (!isEnabled) return;
         const color = COLORS[level];
         console.log(`%c${PREFIX}`, `color: ${color}; font-weight: bold;`, ...args);
     },
 
+    // Function for grouping log messages
     group(label: string): void {
         if (!isEnabled) return;
         console.group(`${PREFIX} ${label}`);
     },
 
+    // Function for ending a log group
     groupEnd(): void {
         if (!isEnabled) return;
         console.groupEnd();
     },
 
+    // Function for logging data in table format
     table(data: unknown): void {
         if (!isEnabled) return;
         console.table(data);
     },
 
-    /**
-     * Безопасное логирование ошибок с сохранением стека
-     */
+    // Function for logging errors with stack trace
     errorWithStack(error: Error, context?: string): void {
         if (!isEnabled) return;
         console.error(`${PREFIX} ${context || 'Error'}:`, error);
@@ -74,9 +81,7 @@ export const logger = {
         }
     },
 
-    /**
-     * Логирование производительности (время выполнения)
-     */
+    // Function for measuring synchronous execution time
     time(label: string, fn: () => void): void {
         if (!isEnabled) {
             fn();
@@ -90,9 +95,7 @@ export const logger = {
         }
     },
 
-    /**
-     * Асинхронное логирование производительности
-     */
+    // Function for measuring asynchronous execution time
     async timeAsync<T>(label: string, fn: () => Promise<T>): Promise<T> {
         if (!isEnabled) {
             return fn();
@@ -106,5 +109,4 @@ export const logger = {
     },
 };
 
-// Экспортируем для совместимости с старым кодом
 export default logger;

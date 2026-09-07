@@ -1,4 +1,8 @@
-// src/core/storage.ts
+/*
+* @author: potemk.in
+* @brief: LocalStorage wrapper for persistent settings with type safety and debug support.
+* @desc: This file provides a typed storage system for managing application settings in localStorage. It includes getters and setters for boolean and generic values, default values, reset functionality, key listing, and debug mode for tracking operations. All methods handle errors gracefully.
+*/
 
 type StorageKey = 
     | 'hideStories' 
@@ -40,17 +44,15 @@ const DEFAULTS: Settings = {
 
 const PREFIX = 'kmod_';
 
-// Флаг для отладки storage (выключен по умолчанию)
 let debugMode = false;
 
 export const storage = {
-    /**
-     * Включить/выключить отладку storage
-     */
+    // Function for enabling or disabling storage debug mode
     setDebug(enabled: boolean): void {
         debugMode = enabled;
     },
 
+    // Function for retrieving a value from storage
     get<T = unknown>(key: StorageKey): T | null {
         try {
             const value = localStorage.getItem(PREFIX + key);
@@ -64,6 +66,7 @@ export const storage = {
         }
     },
 
+    // Function for storing a value in storage
     set<T = unknown>(key: StorageKey, value: T): void {
         try {
             localStorage.setItem(PREFIX + key, JSON.stringify(value));
@@ -75,6 +78,7 @@ export const storage = {
         }
     },
 
+    // Function for removing a key from storage
     remove(key: StorageKey): void {
         try {
             localStorage.removeItem(PREFIX + key);
@@ -86,24 +90,25 @@ export const storage = {
         }
     },
 
+    // Function for retrieving a boolean value from storage
     getBoolean(key: StorageKey): boolean {
     const raw = localStorage.getItem(PREFIX + key);
     if (raw === null) {
-        // Приводим значение по умолчанию к boolean (гарантирует тип boolean)
         return Boolean(DEFAULTS[key as keyof Settings]);
     }
     try {
         return Boolean(JSON.parse(raw));
     } catch {
-        // Если не JSON, сравниваем с 'true'
         return raw === 'true';
     }
 },
 
+    // Function for storing a boolean value in storage
     setBoolean(key: StorageKey, value: boolean): void {
         this.set<boolean>(key, value);
     },
 
+    // Function for retrieving all settings from storage
     getAll(): Settings {
         return {
             hideStories: this.getBoolean('hideStories'),
@@ -119,9 +124,7 @@ export const storage = {
         };
     },
 
-    /**
-     * Сброс всех настроек в значения по умолчанию
-     */
+    // Function for resetting all settings to default values
     resetToDefaults(): void {
         for (const [key, value] of Object.entries(DEFAULTS)) {
             this.set(key as StorageKey, value);
@@ -131,9 +134,7 @@ export const storage = {
         }
     },
 
-    /**
-     * Полное удаление всех ключей kmod
-     */
+    // Function for clearing all kmod storage keys
     clearAll(): void {
         const keys: StorageKey[] = [
             'hideStories', 'hideSferum', 'replaceTitle', 'hidePhone',
@@ -148,16 +149,12 @@ export const storage = {
         }
     },
 
-    /**
-     * Проверка существования ключа
-     */
+    // Function for checking if a key exists in storage
     has(key: StorageKey): boolean {
         return localStorage.getItem(PREFIX + key) !== null;
     },
 
-    /**
-     * Получение всех ключей с префиксом kmod
-     */
+    // Function for retrieving all kmod keys from storage
     getAllKeys(): string[] {
         const keys: string[] = [];
         for (let i = 0; i < localStorage.length; i++) {
@@ -169,9 +166,7 @@ export const storage = {
         return keys;
     },
 
-    /**
-     * Получение всех значений (только kmod)
-     */
+    // Function for retrieving all kmod values from storage
     getAllValues(): Record<string, unknown> {
         const result: Record<string, unknown> = {};
         const keys = this.getAllKeys();
@@ -182,5 +177,4 @@ export const storage = {
     },
 };
 
-// Экспортируем DEFAULTS для использования в других модулях
 export { DEFAULTS as STORAGE_DEFAULTS };

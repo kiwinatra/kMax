@@ -1,10 +1,10 @@
-// src/config.ts
+/*
+* @author: potemk.in
+* @brief: Application configuration, default settings, selectors, storage keys, and validation utilities.
+* @desc: This file defines the core configuration constants including app metadata, default settings, DOM selectors from OFFSETS, storage keys, and type definitions. It also provides validation functions to ensure all selectors and text values are properly defined at runtime.
+*/
 
 import { OFFSETS } from './offsets';
-
-// ============================================================
-// КОНСТАНТЫ
-// ============================================================
 
 export const CONFIG = {
     name: 'kMax Mod',
@@ -12,10 +12,6 @@ export const CONFIG = {
     author: 'kiwinatra потемкин короче',
     site: 'max.ru',
 } as const;
-
-// ============================================================
-// НАСТРОЙКИ ПО УМОЛЧАНИЮ
-// ============================================================
 
 export const DEFAULT_SETTINGS = {
     hideStories: false,
@@ -31,10 +27,6 @@ export const DEFAULT_SETTINGS = {
     fontFamily: 'system-ui, -apple-system, sans-serif',
 } as const;
 
-// ============================================================
-// СЕЛЕКТОРЫ (с валидацией)
-// ============================================================
-
 export const SELECTORS = {
     name: OFFSETS.classes.name,
     phone: OFFSETS.classes.phone,
@@ -47,19 +39,11 @@ export const SELECTORS = {
     headerTitle: OFFSETS.classes.headerTitle,
 } as const;
 
-// ============================================================
-// ТЕКСТЫ
-// ============================================================
-
 export const TEXTS = {
     sferum: OFFSETS.texts.sferum,
     settings: OFFSETS.texts.settings,
     settingsRu: OFFSETS.texts.settingsRu,
 } as const;
-
-// ============================================================
-// КЛЮЧИ STORAGE
-// ============================================================
 
 export const STORAGE_KEYS = {
     hideStories: OFFSETS.storage.keys.hideStories,
@@ -77,65 +61,40 @@ export const STORAGE_KEYS = {
     templates: 'templates',
 } as const;
 
-// ============================================================
-// ТИПЫ
-// ============================================================
-
 export type Settings = typeof DEFAULT_SETTINGS;
 export type SettingKey = keyof Settings;
 export type Language = Settings['language'];
 export type StorageKey = keyof typeof STORAGE_KEYS;
 
-// ============================================================
-// ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
-// ============================================================
-
-/**
- * Проверка валидности значения настройки
- */
+// Function for checking if a string is a valid setting key
 export function isValidSettingKey(key: string): key is SettingKey {
     return key in DEFAULT_SETTINGS;
 }
 
-/**
- * Получение значения по умолчанию для настройки
- */
+// Function for retrieving the default value for a setting
 export function getDefaultSetting<K extends SettingKey>(key: K): Settings[K] {
     return DEFAULT_SETTINGS[key];
 }
 
-/**
- * Проверка, является ли язык валидным
- */
+// Function for checking if a language code is valid
 export function isValidLanguage(lang: string): lang is Language {
     return lang === 'ru' || lang === 'en';
 }
 
-/**
- * Получение всех ключей настроек
- */
+// Function for retrieving all setting keys
 export function getAllSettingKeys(): SettingKey[] {
     return Object.keys(DEFAULT_SETTINGS) as SettingKey[];
 }
 
-/**
- * Получение всех ключей storage
- */
+// Function for retrieving all storage keys
 export function getAllStorageKeys(): StorageKey[] {
     return Object.keys(STORAGE_KEYS) as StorageKey[];
 }
 
-// ============================================================
-// ВАЛИДАЦИЯ КОНФИГА (при запуске)
-// ============================================================
-
-/**
- * Проверка, что все селекторы не пустые
- */
+// Function for validating that all selectors are non-empty
 export function validateSelectors(): boolean {
     let valid = true;
     for (const [key, value] of Object.entries(SELECTORS)) {
-        // Приводим к строке для проверки
         if (!value || (value as string).length === 0) {
             console.warn(`[KMOD] Empty selector: ${key}`);
             valid = false;
@@ -144,13 +103,10 @@ export function validateSelectors(): boolean {
     return valid;
 }
 
-/**
- * Проверка, что все тексты не пустые
- */
+// Function for validating that all text constants are non-empty
 export function validateTexts(): boolean {
     let valid = true;
     for (const [key, value] of Object.entries(TEXTS)) {
-        // Приводим к строке для проверки
         if (!value || (value as string).length === 0) {
             console.warn(`[KMOD] Empty text: ${key}`);
             valid = false;
@@ -159,17 +115,12 @@ export function validateTexts(): boolean {
     return valid;
 }
 
-// Автоматическая валидация при импорте
 if (typeof window !== 'undefined') {
     const isValid = validateSelectors() && validateTexts();
     if (!isValid) {
         console.warn('[KMOD] Some selectors or texts are empty. Features may not work correctly.');
     }
 }
-
-// ============================================================
-// ЭКСПОРТ ДЛЯ СОВМЕСТИМОСТИ
-// ============================================================
 
 export default {
     CONFIG,

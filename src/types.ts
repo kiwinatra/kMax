@@ -1,8 +1,8 @@
-// src/types.ts
-
-// ============================================================
-// ОСНОВНЫЕ ТИПЫ
-// ============================================================
+/*
+* @author: potemk.in
+* @brief: TypeScript type definitions for application configuration, settings, locales, and utility functions.
+* @desc: This file defines all the core types and interfaces used across the application, including configuration, settings, locale strings, UI options, observer options, storage keys, feature definitions, DOM utilities, logger levels, and helper types. It also provides type guard functions for locale and storage keys.
+*/
 
 export interface Config {
     name: string;
@@ -10,7 +10,6 @@ export interface Config {
     author: string;
     site: string;
 }
-
 export interface Settings {
     hideStories: boolean;
     hideSferum: boolean;
@@ -26,11 +25,9 @@ export interface Settings {
 }
 
 export interface Locale {
-    // Заголовки
     settingsTitle: string;
     settingsSubtitle: string;
     
-    // Секции (сайдбар)
     sectionGeneral: string;
     sectionSecurity: string;
     sectionAppearance: string;
@@ -39,7 +36,6 @@ export interface Locale {
     sectionLanguage: string;
     sectionAbout: string;
     
-    // Описания секций
     sectionGeneralDesc: string;
     sectionSecurityDesc: string;
     sectionAppearanceDesc: string;
@@ -48,57 +44,47 @@ export interface Locale {
     sectionLanguageDesc: string;
     sectionAboutDesc: string;
     
-    // Фичи - Основные
     hideStoriesLabel: string;
     hideStoriesDesc: string;
     hideSferumLabel: string;
     hideSferumDesc: string;
     
-    // Фичи - Безопасность
     blockAnalyticsLabel: string;
     blockAnalyticsDesc: string;
     hidePhoneLabel: string;
     hidePhoneDesc: string;
     
-    // Фичи - Внешний вид
     showCrownLabel: string;
     showCrownDesc: string;
     replaceTitleLabel: string;
     replaceTitleDesc: string;
     
-    // Фичи - Медиа
     showMetadataLabel: string;
     showMetadataDesc: string;
     
-    // Фичи - Другое
     replaceMaxLabel: string;
     replaceMaxDesc: string;
     logViewLabel: string;
     logViewDesc: string;
     
-    // Язык
     languageLabel: string;
     languageRu: string;
     languageEn: string;
     
-    // О моде
     aboutName: string;
     aboutVersion: string;
     aboutAuthor: string;
     aboutDescription: string;
     
-    // Кнопки
     saveButton: string;
     resetButton: string;
     resetConfirm: string;
     closeButton: string;
     
-    // Статусы
     statusActive: string;
     statusEnabled: string;
     statusDisabled: string;
     
-    // Общие элементы
     toggleOn: string;
     toggleOff: string;
     backToSettings: string;
@@ -106,10 +92,6 @@ export interface Locale {
 
 export type LocaleKey = keyof Locale;
 export type LocaleMap = Record<string, Locale>;
-
-// ============================================================
-// UI ТИПЫ
-// ============================================================
 
 export interface ButtonOptions {
     text: string;
@@ -132,10 +114,6 @@ export interface ModalOptions {
     closeOnEscape?: boolean;
 }
 
-// ============================================================
-// OBSERVER ТИПЫ
-// ============================================================
-
 export type ObserverCallback = () => void;
 
 export interface ObserverOptions {
@@ -145,10 +123,6 @@ export interface ObserverOptions {
     attributes?: boolean;
     attributeFilter?: string[];
 }
-
-// ============================================================
-// STORAGE ТИПЫ
-// ============================================================
 
 export type StorageKey = 
     | 'hideStories' 
@@ -165,10 +139,6 @@ export type StorageKey =
     | 'chatTags'
     | 'templates';
 
-// ============================================================
-// FEATURE ТИПЫ
-// ============================================================
-
 export type FeatureSection = 'general' | 'security' | 'appearance' | 'media' | 'other';
 
 export interface Feature {
@@ -181,10 +151,6 @@ export interface Feature {
 }
 
 export type FeatureMap = Record<string, Feature>;
-
-// ============================================================
-// DOM ТИПЫ
-// ============================================================
 
 export interface ElementOptions {
     className?: string;
@@ -203,15 +169,7 @@ export interface WaitOptions {
     throwOnTimeout?: boolean;
 }
 
-// ============================================================
-// LOGGER ТИПЫ
-// ============================================================
-
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
-
-// ============================================================
-// ВСПОМОГАТЕЛЬНЫЕ ТИПЫ
-// ============================================================
 
 export type Nullable<T> = T | null;
 export type Optional<T> = T | undefined;
@@ -228,13 +186,7 @@ export type ReadonlyDeep<T> = {
 export type ValueOf<T> = T[keyof T];
 export type KeyOf<T> = keyof T;
 
-// ============================================================
-// УТИЛИТЫ ТИПОВ
-// ============================================================
-
-/**
- * Проверка, является ли значение ключом локали
- */
+// Function for checking if a string is a valid locale key
 export function isLocaleKey(key: string): key is LocaleKey {
     const sampleLocale: Locale = {
         settingsTitle: '',
@@ -292,9 +244,7 @@ export function isLocaleKey(key: string): key is LocaleKey {
     return key in sampleLocale;
 }
 
-/**
- * Проверка, является ли значение ключом storage
- */
+// Function for checking if a string is a valid storage key
 export function isStorageKey(key: string): key is StorageKey {
     const storageKeys: StorageKey[] = [
         'hideStories', 'hideSferum', 'replaceTitle', 'hidePhone',
@@ -303,10 +253,6 @@ export function isStorageKey(key: string): key is StorageKey {
     ];
     return storageKeys.includes(key as StorageKey);
 }
-
-// ============================================================
-// ЭКСПОРТ
-// ============================================================
 
 export default {
     isLocaleKey,

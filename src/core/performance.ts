@@ -1,5 +1,10 @@
-// src/core/performance.ts
+/*
+* @author: potemk.in
+* @brief: Performance utilities including throttling, debouncing, timing, idle execution, and tab visibility management.
+* @desc: This file provides a collection of performance optimization utilities including throttle and debounce functions for rate-limiting function calls, performance measurement with warnings for slow operations, idle callback scheduling with fallback, and tab visibility detection with change listeners.
+*/
 
+// Function for throttling function calls to a specified limit
 export function throttle<T extends (...args: any[]) => void>(
     fn: T,
     limit: number
@@ -27,6 +32,7 @@ export function throttle<T extends (...args: any[]) => void>(
     } as T;
 }
 
+// Function for debouncing function calls with a delay
 export function debounce<T extends (...args: any[]) => void>(
     fn: T,
     delay: number
@@ -42,6 +48,7 @@ export function debounce<T extends (...args: any[]) => void>(
     } as T;
 }
 
+// Function for measuring execution time with performance warnings
 export function measureTime<T>(label: string, fn: () => T): T {
     const start = performance.now();
     try {
@@ -54,6 +61,7 @@ export function measureTime<T>(label: string, fn: () => T): T {
     }
 }
 
+// Function for scheduling a callback during idle time
 export function whenIdle(callback: () => void, timeout: number = 2000): void {
     if ('requestIdleCallback' in window) {
         requestIdleCallback(() => callback(), { timeout });
@@ -62,10 +70,12 @@ export function whenIdle(callback: () => void, timeout: number = 2000): void {
     }
 }
 
+// Function for checking if the current tab is visible
 export function isTabVisible(): boolean {
     return document.visibilityState === 'visible';
 }
 
+// Function for subscribing to tab visibility changes
 export function onVisibilityChange(callback: (visible: boolean) => void): () => void {
     const handler = () => callback(isTabVisible());
     document.addEventListener('visibilitychange', handler);

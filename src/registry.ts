@@ -1,10 +1,13 @@
-// src/registry.ts
+/*
+* @author: potemk.in
+* @brief: Feature registry for managing application features with lazy loading support.
+* @desc: This file defines the feature registry system that manages all application features, including their enable/disable logic, persistence via storage, and lazy loading capabilities. It handles feature initialization, application, toggling, and state management across the application.
+*/
 
 import { storage } from './core/storage';
 import { logger } from './core/logger';
 import { whenIdle } from './core/performance';
 
-// Импорты фич
 import { enable as enableAnalytics, disable as disableAnalytics } from './features/blockAnalytics';
 import { enable as enableCrown, disable as disableCrown, apply as applyCrown } from './features/addCrown';
 import { enable as enableMetadata, disable as disableMetadata, apply as applyMetadata } from './features/showMetadata';
@@ -21,7 +24,7 @@ export interface Feature {
     key: string;
     default: boolean;
     label: string;
-    section: 'general' | 'security' | 'appearance' | 'media' | 'other' | 'chats'; // ← ДОБАВЛЯЕМ 'chats'
+    section: 'general' | 'security' | 'appearance' | 'media' | 'other' | 'chats';
     apply: () => void;
     enable: () => void;
     disable: () => void;
@@ -123,7 +126,7 @@ export const FEATURES: Record<string, Feature> = {
         key: 'chatTags',
         default: false,
         label: 'chatTagsLabel',
-        section: 'chats', // ← ИСПРАВЛЕНО: было 'other', стало 'chats'
+        section: 'chats',
         apply: applyChatTags,
         enable: enableChatTags,
         disable: disableChatTags,
@@ -141,21 +144,24 @@ export const FEATURES: Record<string, Feature> = {
 },
 };
 
-// Кеш применённых фич
 const appliedFeatures = new Set<string>();
 
+// Function for retrieving all feature keys
 export function getFeatureKeys(): string[] {
     return Object.keys(FEATURES);
 }
 
+// Function for retrieving a specific feature by key
 export function getFeature(key: string): Feature | undefined {
     return FEATURES[key];
 }
 
+// Function for retrieving features grouped by section
 export function getFeaturesBySection(section: string): [string, Feature][] {
     return Object.entries(FEATURES).filter(([, feature]) => feature.section === section);
 }
 
+// Function for applying all features based on storage state
 export function applyAllFeatures(): void {
     for (const [key, feature] of Object.entries(FEATURES)) {
         const enabled = storage.getBoolean(key as any);
@@ -179,6 +185,7 @@ export function applyAllFeatures(): void {
     }
 }
 
+// Function for applying a single feature by key
 export function applyFeature(key: string): void {
     const feature = FEATURES[key];
     if (!feature) return;
@@ -205,6 +212,7 @@ export function applyFeature(key: string): void {
     }
 }
 
+// Function for toggling a feature's state
 export function toggleFeature(key: string): boolean {
     const feature = FEATURES[key];
     if (!feature) {
@@ -235,6 +243,7 @@ export function toggleFeature(key: string): boolean {
     return newState;
 }
 
+// Function for checking if a feature is enabled
 export function isFeatureEnabled(key: string): boolean {
     return storage.getBoolean(key as any);
 }

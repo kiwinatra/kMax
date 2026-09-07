@@ -1,4 +1,8 @@
-// src/main.ts
+/*
+* @author: potemk.in
+* @brief: Main entry point for the application that handles initialization, feature application, DOM watching, and global error handling.
+* @desc: This file is the core bootstrap module that initializes the entire application. It manages feature registration, DOM mutation observation, locale initialization, global API exposure, error handling, and crash recovery. It also controls the loading screen lifecycle and provides safe mode functionality.
+*/
 
 import { CONFIG } from './config';
 import { locales, getLocale, initLocale } from './locales';
@@ -14,27 +18,16 @@ import { FEATURES } from './registry';
 import { whenIdle, isTabVisible, onVisibilityChange } from './core/performance';
 import { applyStoredFont } from './features/changeFont';
 
-// ============================================================
-// СОСТОЯНИЕ
-// ============================================================
-
 let initialized = false;
 let initPromise: Promise<void> | null = null;
 let unwatchDom: (() => void) | null = null;
 let domWatchTimeout: number | null = null;
 let visibilityUnwatch: (() => void) | null = null;
 
-// ============================================================
-// КОНСТАНТЫ
-// ============================================================
-
 const DOM_WATCH_DEBOUNCE = 500;
 const MAX_INIT_ATTEMPTS = 3;
 
-// ============================================================
-// ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
-// ============================================================
-
+// Function for checking if the current site is max.ru
 function isMaxSite(): boolean {
     try {
         return window.location.hostname.includes('max.ru');
@@ -43,6 +36,7 @@ function isMaxSite(): boolean {
     }
 }
 
+// Function for safely applying all features with error handling
 function safeApplyAllFeatures(): void {
     try {
         applyAllFeatures();
@@ -51,6 +45,7 @@ function safeApplyAllFeatures(): void {
     }
 }
 
+// Function for handling DOM changes and reapplying features
 function handleDomChanges(): void {
     if (!isTabVisible()) return;
     
@@ -75,10 +70,7 @@ function handleDomChanges(): void {
     }, DOM_WATCH_DEBOUNCE);
 }
 
-// ============================================================
-// ИНИЦИАЛИЗАЦИЯ
-// ============================================================
-
+// Function for initializing the application with retry logic
 async function init(): Promise<void> {
     if (initialized) {
         logger.debug('Already initialized, skipping');
@@ -110,6 +102,7 @@ async function init(): Promise<void> {
     return initPromise;
 }
 
+// Function for performing the actual initialization logic
 async function doInit(): Promise<void> {
     if (!isMaxSite()) {
         logger.warn('Mod is not running on max.ru. Some features may not work.');
@@ -118,7 +111,6 @@ async function doInit(): Promise<void> {
     initLocale();
     logger.info(`🌐 Locale: ${getLocale('settingsTitle')}`);
 
-    // ===== КЛЮЧЕВОЙ МОМЕНТ: применяем фичи ДО скрытия загрузчика =====
     safeApplyAllFeatures();
 
     try {
@@ -127,7 +119,6 @@ async function doInit(): Promise<void> {
         logger.error('Failed to create version badge:', error);
     }
 
-    // Кнопки создаём отложенно (они не критичны)
     try {
         whenIdle(() => {
             waitForSettingsAndCreateButtons();
@@ -154,12 +145,12 @@ async function doInit(): Promise<void> {
     setupGlobalAPI();
     applyStoredFont();
     
-    // ===== СКРЫВАЕМ ЗАГРУЗЧИК ТОЛЬКО ПОСЛЕ ПРИМЕНЕНИЯ ФИЧ =====
     hideLoader();
 
     logger.info('✅ Mod initialized');
 }
 
+// Function for exposing global API on window object
 function setupGlobalAPI(): void {
     if (typeof window === 'undefined') return;
 
@@ -201,10 +192,6 @@ declare global {
         };
     }
 }
-
-// ============================================================
-// ЗАПУСК
-// ============================================================
 
 if (typeof window !== 'undefined') {
     showLoader();
@@ -251,10 +238,6 @@ if (safeMode) {
     }
 }
 
-// ============================================================
-// ГЛОБАЛЬНЫЕ ХЕНДЛЕРЫ ОШИБОК
-// ============================================================
-
 if (typeof window !== 'undefined') {
     window.addEventListener('error', (event) => {
         const message = event.message || '';
@@ -291,15 +274,7 @@ if (typeof window !== 'undefined') {
     });
 }
 
-// ============================================================
-// ЭКСПОРТЫ
-// ============================================================
-
 export { init, isMaxSite, handleDomChanges };
-
-// ============================================================
-// ОЧИСТКА
-// ============================================================
 
 window.addEventListener('beforeunload', () => {
     if (unwatchDom) {

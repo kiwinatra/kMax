@@ -1,17 +1,9 @@
-// src/core/dom.ts
+/*
+* @author: potemk.in
+* @brief: Core DOM utilities for safe and efficient DOM manipulation with type safety and error handling.
+* @desc: This file provides a comprehensive set of DOM utilities including element selection, creation, manipulation, waiting for elements, class management, navigation, and batch style updates. All functions are type-safe and handle errors gracefully without throwing.
+*/
 
-/**
- * DOM утилиты для безопасной и эффективной работы с DOM
- * Все функции типобезопасны и обрабатывают ошибки
- */
-
-// ============================================================
-// БАЗОВЫЕ ЗАПРОСЫ
-// ============================================================
-
-/**
- * Поиск одного элемента с типобезопасностью
- */
 export function qs<T extends Element = Element>(
   selector: string,
   context: ParentNode = document
@@ -23,9 +15,6 @@ export function qs<T extends Element = Element>(
   }
 }
 
-/**
- * Поиск всех элементов с типобезопасностью
- */
 export function qsa<T extends Element = Element>(
   selector: string,
   context: ParentNode = document
@@ -37,16 +26,9 @@ export function qsa<T extends Element = Element>(
   }
 }
 
-/**
- * Проверка существования элемента (без throw)
- */
 export function exists(selector: string, context: ParentNode = document): boolean {
   return qs(selector, context) !== null;
 }
-
-// ============================================================
-// СОЗДАНИЕ ЭЛЕМЕНТОВ
-// ============================================================
 
 export type ElementOptions<K extends keyof HTMLElementTagNameMap> = {
   className?: string;
@@ -59,55 +41,44 @@ export type ElementOptions<K extends keyof HTMLElementTagNameMap> = {
   dataset?: Record<string, string>;
 };
 
-/**
- * Создание элемента с полным контролем
- */
 export function createElement<K extends keyof HTMLElementTagNameMap>(
   tag: K,
   options: ElementOptions<K> = {}
 ): HTMLElementTagNameMap[K] {
   const el = document.createElement(tag);
 
-  // Классы
   if (options.className) {
     el.className = options.className;
   }
 
-  // ID
   if (options.id) {
     el.id = options.id;
   }
 
-  // Текст
   if (options.text) {
     el.textContent = options.text;
   }
 
-  // HTML (опасно, но нужно)
   if (options.html) {
     el.innerHTML = options.html;
   }
 
-  // Атрибуты
   if (options.attrs) {
     for (const [key, value] of Object.entries(options.attrs)) {
       el.setAttribute(key, value);
     }
   }
 
-  // Стили
   if (options.styles) {
     Object.assign(el.style, options.styles);
   }
 
-  // Data-атрибуты
   if (options.dataset) {
     for (const [key, value] of Object.entries(options.dataset)) {
       el.dataset[key] = value;
     }
   }
 
-  // События
   if (options.events) {
     for (const [event, handler] of Object.entries(options.events)) {
       el.addEventListener(event, handler);
@@ -117,9 +88,6 @@ export function createElement<K extends keyof HTMLElementTagNameMap>(
   return el;
 }
 
-/**
- * Быстрое создание простого элемента
- */
 export function createSimpleElement<K extends keyof HTMLElementTagNameMap>(
   tag: K,
   text?: string,
@@ -131,20 +99,10 @@ export function createSimpleElement<K extends keyof HTMLElementTagNameMap>(
   });
 }
 
-/**
- * Клонирование элемента с сохранением структуры
- */
 export function cloneElement<T extends Element>(el: T, deep: boolean = true): T {
   return el.cloneNode(deep) as T;
 }
 
-// ============================================================
-// МАССОВЫЕ ОПЕРАЦИИ
-// ============================================================
-
-/**
- * Удаление всех элементов по селектору
- */
 export function removeElements(selector: string, context: ParentNode = document): number {
   const elements = qsa(selector, context);
   let count = 0;
@@ -155,9 +113,6 @@ export function removeElements(selector: string, context: ParentNode = document)
   return count;
 }
 
-/**
- * Скрытие всех элементов по селектору
- */
 export function hideElements(selector: string, context: ParentNode = document): number {
   const elements = qsa<HTMLElement>(selector, context);
   let count = 0;
@@ -170,9 +125,6 @@ export function hideElements(selector: string, context: ParentNode = document): 
   return count;
 }
 
-/**
- * Показ всех элементов по селектору
- */
 export function showElements(selector: string, context: ParentNode = document): number {
   const elements = qsa<HTMLElement>(selector, context);
   let count = 0;
@@ -185,9 +137,6 @@ export function showElements(selector: string, context: ParentNode = document): 
   return count;
 }
 
-/**
- * Переключение видимости
- */
 export function toggleElements(selector: string, context: ParentNode = document): number {
   const elements = qsa<HTMLElement>(selector, context);
   let count = 0;
@@ -198,19 +147,12 @@ export function toggleElements(selector: string, context: ParentNode = document)
   return count;
 }
 
-// ============================================================
-// ОЖИДАНИЕ ЭЛЕМЕНТОВ (с улучшенной стабильностью)
-// ============================================================
-
 export interface WaitOptions {
   timeout?: number;
   interval?: number;
   throwOnTimeout?: boolean;
 }
 
-/**
- * Ожидание появления элемента с гибкими настройками
- */
 export function waitForElement<T extends Element = Element>(
   selector: string,
   options: WaitOptions = {}
@@ -222,7 +164,6 @@ export function waitForElement<T extends Element = Element>(
   } = options;
 
   return new Promise((resolve, reject) => {
-    // Проверяем сразу
     const existing = qs<T>(selector);
     if (existing) {
       resolve(existing);
@@ -245,7 +186,6 @@ export function waitForElement<T extends Element = Element>(
       subtree: true,
     });
 
-    // Дополнительная проверка по интервалу (для надёжности)
     intervalId = window.setInterval(() => {
       const el = qs<T>(selector);
       if (el) {
@@ -254,7 +194,6 @@ export function waitForElement<T extends Element = Element>(
       }
     }, interval);
 
-    // Таймаут
     if (timeout > 0) {
       timer = window.setTimeout(() => {
         cleanup();
@@ -280,9 +219,6 @@ export function waitForElement<T extends Element = Element>(
   });
 }
 
-/**
- * Ожидание появления нескольких элементов
- */
 export function waitForElements<T extends Element = Element>(
   selector: string,
   options: WaitOptions = {}
@@ -292,10 +228,6 @@ export function waitForElements<T extends Element = Element>(
     return qsa<T>(selector);
   });
 }
-
-// ============================================================
-// РАБОТА С КЛАССАМИ (безопасная)
-// ============================================================
 
 export function hasClass(el: Element, className: string): boolean {
   try {
@@ -340,13 +272,6 @@ export function replaceClass(el: Element, oldClass: string, newClass: string): v
   }
 }
 
-// ============================================================
-// НАВИГАЦИЯ ПО DOM
-// ============================================================
-
-/**
- * Поиск ближайшего родителя по селектору
- */
 export function findParent(el: Element, selector: string): Element | null {
   try {
     let parent = el.parentElement;
@@ -362,16 +287,10 @@ export function findParent(el: Element, selector: string): Element | null {
   return null;
 }
 
-/**
- * Поиск ближайшего родителя по классу
- */
 export function findParentByClass(el: Element, className: string): Element | null {
   return findParent(el, `.${className}`);
 }
 
-/**
- * Поиск ближайшего элемента по селектору (включая себя)
- */
 export function closest<T extends Element = Element>(el: Element, selector: string): T | null {
   try {
     return el.closest<T>(selector);
@@ -380,34 +299,18 @@ export function closest<T extends Element = Element>(el: Element, selector: stri
   }
 }
 
-// ============================================================
-// ПРОВЕРКИ И ВАЛИДАЦИЯ
-// ============================================================
-
-/**
- * Проверка, что элемент видим (не скрыт через display: none)
- */
 export function isVisible(el: HTMLElement): boolean {
   return el.offsetParent !== null || el.style.display !== 'none';
 }
 
-/**
- * Проверка, что элемент находится в DOM
- */
 export function isInDOM(el: Element): boolean {
   return document.contains(el);
 }
 
-/**
- * Безопасное получение текста
- */
 export function getText(el: Element): string {
   return el.textContent?.trim() || '';
 }
 
-/**
- * Безопасное получение атрибута
- */
 export function getAttr(el: Element, attr: string): string | null {
   try {
     return el.getAttribute(attr);
@@ -415,10 +318,6 @@ export function getAttr(el: Element, attr: string): string | null {
     return null;
   }
 }
-
-// ============================================================
-// ВСТАВКА ЭЛЕМЕНТОВ
-// ============================================================
 
 export function insertAfter(el: Element, referenceNode: Element): void {
   try {
@@ -452,13 +351,6 @@ export function prependTo(el: Element, parent: Element): void {
   }
 }
 
-// ============================================================
-// БЕЗОПАСНОЕ ОБНОВЛЕНИЕ
-// ============================================================
-
-/**
- * Безопасная замена текста (без перезаписи событий)
- */
 export function updateText(el: Element, text: string): void {
   try {
     if (el.textContent !== text) {
@@ -469,9 +361,6 @@ export function updateText(el: Element, text: string): void {
   }
 }
 
-/**
- * Безопасное обновление HTML
- */
 export function updateHTML(el: Element, html: string): void {
   try {
     if (el.innerHTML !== html) {
@@ -482,9 +371,6 @@ export function updateHTML(el: Element, html: string): void {
   }
 }
 
-/**
- * Безопасное обновление стиля
- */
 export function updateStyle(el: HTMLElement, property: string, value: string): void {
   try {
     (el.style as any)[property] = value;
@@ -492,10 +378,6 @@ export function updateStyle(el: HTMLElement, property: string, value: string): v
     // тихо
   }
 }
-
-// ============================================================
-// БАТЧИНГ ИЗМЕНЕНИЙ СТИЛЕЙ
-// ============================================================
 
 let styleBatch: Array<{ el: HTMLElement; prop: string; value: string }> = [];
 let styleBatchTimer: number | null = null;
@@ -530,10 +412,6 @@ export function flushStyleBatch(): void {
         } catch {}
     }
 }
-
-// ============================================================
-// ЭКСПОРТ ВСЕГО В ОДНОМ ОБЪЕКТЕ (для использования через window)
-// ============================================================
 
 export const dom = {
   qs,
