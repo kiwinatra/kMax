@@ -1,12 +1,12 @@
 /*
 * @author: potemk.in
-* @brief: Feature registry for managing application features with lazy loading support.
-* @desc: This file defines the feature registry system that manages all application features, including their enable/disable logic, persistence via storage, and lazy loading capabilities. It handles feature initialization, application, toggling, and state management across the application.
+* @brief: Central feature registry — state, enabling, disabling, and batch-driven DOM application.
+* @desc: Manages all features with a cached Set of enabled keys, so DOM mutations only invoke features that are actually on. Each feature declares optional CSS selectors; when the centralized observer reports added nodes, only matching features are triggered. Features may also receive the raw ObserverBatch to process only what changed. Storage reads are minimized by keeping an in-memory enabled set synchronized with storage.
 */
 
 import { storage } from './core/storage';
 import { logger } from './core/logger';
-import { whenIdle } from './core/performance';
+import { ObserverBatch } from './core/observer';
 
 import { enable as enableAnalytics, disable as disableAnalytics } from './features/blockAnalytics';
 import { enable as enableCrown, disable as disableCrown, apply as applyCrown } from './features/addCrown';
@@ -20,15 +20,30 @@ import { enable as enableLogView, disable as disableLogView, apply as applyLogVi
 import { enable as enableChatTags, disable as disableChatTags, apply as applyChatTags } from './features/chatTags';
 import { enable as enableTemplates, disable as disableTemplates, apply as applyTemplates } from './features/templates';
 
+export type FeatureSection =
+    | 'general'
+    | 'security'
+    | 'appearance'
+    | 'media'
+    | 'other'
+    | 'chats';
+
 export interface Feature {
     key: string;
     default: boolean;
     label: string;
-    section: 'general' | 'security' | 'appearance' | 'media' | 'other' | 'chats';
-    apply: () => void;
+    section: FeatureSection;
+    /** Called on init, on toggle, and on every matching DOM batch. */
+    apply: (batch?: ObserverBatch) => void;
     enable: () => void;
     disable: () => void;
     lazy?: boolean;
+    /**
+     * Optional CSS selectors. If provided, `apply` is only triggered when
+     * the centralized observer reports added nodes matching any of them.
+     * If omitted, `apply` runs on every batch.
+     */
+    selectors?: string[];
 }
 
 export const FEATURES: Record<string, Feature> = {
@@ -41,6 +56,7 @@ export const FEATURES: Record<string, Feature> = {
         enable: enableHideStories,
         disable: disableHideStories,
         lazy: true,
+        selectors: ['.storiesStack'],
     },
     logView: {
         key: 'logView',
@@ -61,6 +77,7 @@ export const FEATURES: Record<string, Feature> = {
         enable: enableHideSferum,
         disable: disableHideSferum,
         lazy: true,
+        selectors: ['.item.svelte-6bkz6t', '.item'],
     },
     blockAnalytics: {
         key: 'blockAnalytics',
@@ -81,6 +98,7 @@ export const FEATURES: Record<string, Feature> = {
         enable: enableHidePhone,
         disable: disableHidePhone,
         lazy: true,
+        selectors: ['.phone'],
     },
     showCrown: {
         key: 'showCrown',
@@ -91,6 +109,7 @@ export const FEATURES: Record<string, Feature> = {
         enable: enableCrown,
         disable: disableCrown,
         lazy: true,
+        selectors: ['span.text', '.text.svelte-1riu5uh'],
     },
     replaceTitle: {
         key: 'replaceTitle',
@@ -111,6 +130,7 @@ export const FEATURES: Record<string, Feature> = {
         enable: enableMetadata,
         disable: disableMetadata,
         lazy: true,
+        selectors: ['div.actions.svelte-2k9gk6', 'img'],
     },
     replaceMax: {
         key: 'replaceMax',
@@ -121,6 +141,8 @@ export const FEATURES: Record<string, Feature> = {
         enable: enableReplaceMax,
         disable: disableReplaceMax,
         lazy: true,
+        // No selectors — replaceMax needs every characterData mutation,
+        // and it receives the raw batch to filter internally.
     },
     chatTags: {
         key: 'chatTags',
@@ -131,80 +153,95 @@ export const FEATURES: Record<string, Feature> = {
         enable: enableChatTags,
         disable: disableChatTags,
         lazy: true,
+        selectors: ['.wrapper.svelte-q2jdqb', '.cell.svelte-q2jdqb'],
     },
     templates: {
-    key: 'templates',
-    default: false,
-    label: 'templatesLabel',
-    section: 'chats',
-    apply: applyTemplates,
-    enable: enableTemplates,
-    disable: disableTemplates,
-    lazy: true,
-},
+        key: 'templates',
+        default: false,
+        label: 'templatesLabel',
+        section: 'chats',
+        apply: applyTemplates,
+        enable: enableTemplates,
+        disable: disableTemplates,
+        lazy: true,
+        selectors: ['.contenteditable.svelte-1k31az8', '[contenteditable="true"]'],
+    },
 };
 
-const appliedFeatures = new Set<string>();
+// ============================================================
+// ENABLED SET
+// ============================================================
 
-// Function for retrieving all feature keys
+const enabledFeatures = new Set<string>();
+let enabledSetInitialized = false;
+
+/**
+ * Storage key → boolean resolver.
+ * Some features (chatTags, templates) store an object with an `enabled` field,
+ * so a plain storage.getBoolean won't return the correct state.
+ */
+function resolveFeatureEnabled(key: string): boolean {
+    if (key === 'chatTags') {
+        const data = storage.get<{ enabled?: boolean }>('chatTags');
+        return !!(data && data.enabled);
+    }
+    if (key === 'templates') {
+        const data = storage.get<{ enabled?: boolean }>('templates');
+        return !!(data && data.enabled);
+    }
+    return storage.getBoolean(key as any);
+}
+
+function syncEnabledSet(): void {
+    enabledFeatures.clear();
+    for (const key of Object.keys(FEATURES)) {
+        if (resolveFeatureEnabled(key)) {
+            enabledFeatures.add(key);
+        }
+    }
+    enabledSetInitialized = true;
+}
+
+function ensureEnabledSet(): void {
+    if (!enabledSetInitialized) syncEnabledSet();
+}
+
+// ============================================================
+// LOOKUPS
+// ============================================================
+
 export function getFeatureKeys(): string[] {
     return Object.keys(FEATURES);
 }
 
-// Function for retrieving a specific feature by key
 export function getFeature(key: string): Feature | undefined {
     return FEATURES[key];
 }
 
-// Function for retrieving features grouped by section
 export function getFeaturesBySection(section: string): [string, Feature][] {
-    return Object.entries(FEATURES).filter(([, feature]) => feature.section === section);
+    return Object.entries(FEATURES).filter(([, f]) => f.section === section);
 }
 
-// Function for applying all features based on storage state
+// ============================================================
+// APPLY
+// ============================================================
+
+/** Enable/disable all features according to storage. Called once on init. */
 export function applyAllFeatures(): void {
+    syncEnabledSet();
+
     for (const [key, feature] of Object.entries(FEATURES)) {
-        const enabled = storage.getBoolean(key as any);
-        if (enabled && feature.enable) {
+        const shouldBeOn = enabledFeatures.has(key);
+        if (shouldBeOn) {
             try {
                 feature.enable();
-                appliedFeatures.add(key);
             } catch (e) {
                 logger.error(`Failed to enable feature: ${key}`, e);
+                enabledFeatures.delete(key);
             }
-        } else if (!enabled && feature.disable) {
-            if (appliedFeatures.has(key)) {
-                try {
-                    feature.disable();
-                    appliedFeatures.delete(key);
-                } catch (e) {
-                    logger.error(`Failed to disable feature: ${key}`, e);
-                }
-            }
-        }
-    }
-}
-
-// Function for applying a single feature by key
-export function applyFeature(key: string): void {
-    const feature = FEATURES[key];
-    if (!feature) return;
-
-    const enabled = storage.getBoolean(key as any);
-    if (enabled && feature.enable) {
-        if (!appliedFeatures.has(key)) {
-            try {
-                feature.enable();
-                appliedFeatures.add(key);
-            } catch (e) {
-                logger.error(`Failed to enable feature: ${key}`, e);
-            }
-        }
-    } else if (!enabled && feature.disable) {
-        if (appliedFeatures.has(key)) {
+        } else {
             try {
                 feature.disable();
-                appliedFeatures.delete(key);
             } catch (e) {
                 logger.error(`Failed to disable feature: ${key}`, e);
             }
@@ -212,7 +249,94 @@ export function applyFeature(key: string): void {
     }
 }
 
-// Function for toggling a feature's state
+/** Apply a single feature based on current state. */
+export function applyFeature(key: string): void {
+    const feature = FEATURES[key];
+    if (!feature) return;
+
+    ensureEnabledSet();
+    const shouldBeOn = resolveFeatureEnabled(key);
+
+    if (shouldBeOn && !enabledFeatures.has(key)) {
+        try {
+            feature.enable();
+            enabledFeatures.add(key);
+        } catch (e) {
+            logger.error(`Failed to enable feature: ${key}`, e);
+        }
+    } else if (!shouldBeOn && enabledFeatures.has(key)) {
+        try {
+            feature.disable();
+            enabledFeatures.delete(key);
+        } catch (e) {
+            logger.error(`Failed to disable feature: ${key}`, e);
+        }
+    } else if (shouldBeOn) {
+        try {
+            feature.apply();
+        } catch (e) {
+            logger.error(`Failed to apply feature: ${key}`, e);
+        }
+    }
+}
+
+/**
+ * Called by the centralized observer with a batched set of DOM changes.
+ * Only enabled features are considered. Features with `selectors` run only
+ * when a matching added node is present. Features without selectors run on
+ * every batch (they can filter further via the passed ObserverBatch).
+ */
+export function applyOnMutations(batch: ObserverBatch): void {
+    ensureEnabledSet();
+    if (enabledFeatures.size === 0) return;
+
+    const added = batch.addedNodes;
+
+    for (const key of enabledFeatures) {
+        const feature = FEATURES[key];
+        if (!feature) continue;
+
+        if (feature.selectors && feature.selectors.length > 0) {
+            if (!matchesAnySelector(added, feature.selectors)) continue;
+        }
+
+        try {
+            feature.apply(batch);
+        } catch (e) {
+            logger.error(`Failed to apply feature "${key}" on mutation:`, e);
+        }
+    }
+}
+
+function matchesAnySelector(nodes: Node[], selectors: string[]): boolean {
+    if (nodes.length === 0) return false;
+
+    for (const node of nodes) {
+        if (!(node instanceof Element)) {
+            const parent = node.parentElement;
+            if (parent) {
+                for (const sel of selectors) {
+                    try {
+                        if (parent.matches(sel)) return true;
+                    } catch {}
+                }
+            }
+            continue;
+        }
+
+        for (const sel of selectors) {
+            try {
+                if (node.matches(sel) || node.querySelector(sel)) return true;
+            } catch {}
+        }
+    }
+    return false;
+}
+
+// ============================================================
+// TOGGLE / QUERY
+// ============================================================
+
 export function toggleFeature(key: string): boolean {
     const feature = FEATURES[key];
     if (!feature) {
@@ -220,21 +344,30 @@ export function toggleFeature(key: string): boolean {
         return false;
     }
 
-    const current = storage.getBoolean(key as any);
+    ensureEnabledSet();
+    const current = enabledFeatures.has(key);
     const newState = !current;
-    storage.setBoolean(key as any, newState);
 
-    if (newState && feature.enable) {
+    // Non-boolean features (chatTags, templates) handle their own storage.
+    if (key !== 'chatTags' && key !== 'templates') {
+        storage.setBoolean(key as any, newState);
+    }
+
+    if (newState) {
         try {
             feature.enable();
-            appliedFeatures.add(key);
+            enabledFeatures.add(key);
         } catch (e) {
             logger.error(`Failed to enable feature: ${key}`, e);
+            if (key !== 'chatTags' && key !== 'templates') {
+                storage.setBoolean(key as any, false);
+            }
+            return false;
         }
-    } else if (!newState && feature.disable) {
+    } else {
         try {
             feature.disable();
-            appliedFeatures.delete(key);
+            enabledFeatures.delete(key);
         } catch (e) {
             logger.error(`Failed to disable feature: ${key}`, e);
         }
@@ -243,11 +376,26 @@ export function toggleFeature(key: string): boolean {
     return newState;
 }
 
-// Function for checking if a feature is enabled
 export function isFeatureEnabled(key: string): boolean {
-    return storage.getBoolean(key as any);
+    ensureEnabledSet();
+    return enabledFeatures.has(key);
 }
 
-window.addEventListener('beforeunload', () => {
-    appliedFeatures.clear();
-});
+/**
+ * Force-rebuild the enabled set from storage (e.g. after a bulk reset).
+ */
+export function invalidateEnabledCache(): void {
+    enabledSetInitialized = false;
+    enabledFeatures.clear();
+}
+
+// ============================================================
+// CLEANUP
+// ============================================================
+
+if (typeof window !== 'undefined') {
+    window.addEventListener('beforeunload', () => {
+        enabledFeatures.clear();
+        enabledSetInitialized = false;
+    });
+}

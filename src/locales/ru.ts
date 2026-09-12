@@ -1,142 +1,148 @@
-// src/locales/ru.ts
+/*
+* @author: potemk.in
+* @brief: Russian locale dictionary.
+* @desc: Fully typed against Locale. Contains every key used by the UI.
+*/
 
-export const ru = {
-  // ===== ЗАГОЛОВКИ =====
-  settingsTitle: 'Настройки kMax Mod',
-  settingsSubtitle: 'Управление дополнительными функциями',
+import type { Locale } from '../types';
 
-  // ===== РАЗДЕЛЫ (сайдбар) =====
-  sectionGeneral: 'Основные',
-  sectionSecurity: 'Безопасность',
-  sectionAppearance: 'Внешний вид',
-  sectionMedia: 'Медиа',
-  sectionOther: 'Другое',
-  sectionLanguage: 'Язык',
-  sectionAbout: 'О моде',
+export const ru: Locale = {
+    // ===== HEADERS =====
+    settingsTitle: 'Настройки kMax Mod',
+    settingsSubtitle: 'Управление дополнительными функциями',
 
-  // ===== ОПИСАНИЯ РАЗДЕЛОВ =====
-  sectionGeneralDesc: 'Настройки интерфейса и отображения',
-  sectionSecurityDesc: 'Защита приватности и конфиденциальности',
-  sectionAppearanceDesc: 'Кастомизация визуального стиля',
-  sectionMediaDesc: 'Настройки для фото и контента',
-  sectionOtherDesc: 'Дополнительные функции',
-  sectionLanguageDesc: 'Выбор языка интерфейса',
-  sectionAboutDesc: 'Информация о версии и разработчиках',
+    // ===== SECTIONS =====
+    sectionGeneral: 'Основные',
+    sectionSecurity: 'Безопасность',
+    sectionAppearance: 'Внешний вид',
+    sectionMedia: 'Медиа',
+    sectionOther: 'Другое',
+    sectionLanguage: 'Язык',
+    sectionAbout: 'О моде',
+    sectionChats: 'Чаты',
 
-  // ===== ФИЧИ - ОСНОВНЫЕ =====
-  hideStoriesLabel: 'Скрыть сторис',
-  hideStoriesDesc: 'Скрывает блок со сторис в ленте сообщений',
+    // ===== SECTION DESCRIPTIONS =====
+    sectionGeneralDesc: 'Настройки интерфейса и отображения',
+    sectionSecurityDesc: 'Защита приватности и конфиденциальности',
+    sectionAppearanceDesc: 'Кастомизация визуального стиля',
+    sectionMediaDesc: 'Настройки для фото и контента',
+    sectionOtherDesc: 'Дополнительные функции',
+    sectionLanguageDesc: 'Выбор языка интерфейса',
+    sectionAboutDesc: 'Информация о версии и разработчиках',
+    sectionChatsDesc: 'Управление тегами и шаблонами для чатов',
 
-  hideSferumLabel: 'Скрыть кнопку Сферума',
-  hideSferumDesc: 'Убирает кнопку "Войти в Сферум" из интерфейса',
+    // ===== GENERAL =====
+    hideStoriesLabel: 'Скрыть сторис',
+    hideStoriesDesc: 'Скрывает блок со сторис в ленте сообщений',
 
-  // ===== ФИЧИ - БЕЗОПАСНОСТЬ =====
-  blockAnalyticsLabel: 'Блокировка аналитики',
-  blockAnalyticsDesc: 'Подменяет идентификаторы трекера на фейковые, защищая вашу приватность',
+    hideSferumLabel: 'Скрыть кнопку Сферума',
+    hideSferumDesc: 'Убирает кнопку "Войти в Сферум" из интерфейса',
 
-  hidePhoneLabel: 'Скрыть номер телефона',
-  hidePhoneDesc: 'Скрывает ваш номер телефона в профиле',
+    // ===== SECURITY =====
+    blockAnalyticsLabel: 'Блокировка аналитики',
+    blockAnalyticsDesc: 'Подменяет идентификаторы трекера на фейковые, защищая вашу приватность',
 
-  // ===== ФИЧИ - ВНЕШНИЙ ВИД =====
-  showCrownLabel: 'Корона бета-тестерам',
-  showCrownDesc: 'Выделяет имена бета-тестеров золотым цветом и добавляет 👑',
+    hidePhoneLabel: 'Скрыть номер телефона',
+    hidePhoneDesc: 'Скрывает ваш номер телефона в профиле',
 
-  replaceTitleLabel: 'kMax в заголовке',
-  replaceTitleDesc: 'Добавляет префикс "kMax | " в заголовок страницы',
+    // ===== APPEARANCE =====
+    showCrownLabel: 'Корона бета-тестерам',
+    showCrownDesc: 'Выделяет имена бета-тестеров золотым цветом и добавляет 👑',
 
-  fontFamilyLabel: 'Шрифт',
-fontFamilyDesc: 'Выберите шрифт для всего сайта',
-// en.ts — добавляем названия для всех шрифтов
-fontFamilySystemUI: 'System UI',
-fontFamilyArial: 'Arial',
-fontFamilyArialBlack: 'Arial Black',
-fontFamilyGeorgia: 'Georgia',
-fontFamilyTimesNewRoman: 'Times New Roman',
-fontFamilyCourierNew: 'Courier New',
-fontFamilyVerdana: 'Verdana',
-fontFamilyTahoma: 'Tahoma',
-fontFamilyTrebuchetMS: 'Trebuchet MS',
-fontFamilyImpact: 'Impact',
-fontFamilyComicSansMS: 'Comic Sans MS',
-fontFamilyLucidaSans: 'Lucida Sans',
-fontFamilyGeneva: 'Geneva',
-fontFamilyPalatino: 'Palatino',
-fontFamilyBookman: 'Bookman',
-fontFamilyGaramond: 'Garamond',
-fontFamilyHelvetica: 'Helvetica',
-fontFamilyFranklinGothic: 'Franklin Gothic',
-fontFamilyCenturyGothic: 'Century Gothic',
-fontFamilyCopperplate: 'Copperplate',
-fontFamilyBaskerville: 'Baskerville',
-// Google Fonts
-fontFamilyInter: 'Inter',
-fontFamilyRoboto: 'Roboto',
-fontFamilyOpenSans: 'Open Sans',
-fontFamilyMontserrat: 'Montserrat',
-fontFamilyOswald: 'Oswald',
-fontFamilyRaleway: 'Raleway',
-fontFamilyLato: 'Lato',
-fontFamilyPlayfairDisplay: 'Playfair Display',
-fontFamilyMerriweather: 'Merriweather',
-fontFamilyUbuntu: 'Ubuntu',
-fontFamilyNunito: 'Nunito',
-fontFamilyPoppins: 'Poppins',
-fontFamilyQuicksand: 'Quicksand',
-fontFamilyFiraSans: 'Fira Sans',
-fontFamilySourceSansPro: 'Source Sans Pro',
-fontFamilyPTSans: 'PT Sans',
-fontFamilyIBMPlexSans: 'IBM Plex Sans',
-fontFamilyManrope: 'Manrope',
-fontFamilyJetBrainsMono: 'JetBrains Mono',
-fontFamilyCaveat: 'Caveat',
-fontFamilyMarckScript: 'Marck Script',
+    replaceTitleLabel: 'kMax в заголовке',
+    replaceTitleDesc: 'Добавляет префикс "kMax | " в заголовок страницы',
 
-  // ===== ФИЧИ - МЕДИА =====
-  showMetadataLabel: 'Metadata для фото',
-  showMetadataDesc: 'Добавляет кнопку с информацией о размере, формате и дате загрузки фото',
+    fontFamilyLabel: 'Шрифт',
+    fontFamilyDesc: 'Выберите шрифт для всего сайта',
 
-  // ===== ФИЧИ - ДРУГОЕ =====
-  replaceMaxLabel: 'Замена Max → MAX',
-  replaceMaxDesc: 'Заменяет все упоминания "Max" на "MAX" в тексте страницы',
+    // ===== MEDIA =====
+    showMetadataLabel: 'Metadata для фото',
+    showMetadataDesc: 'Добавляет кнопку с информацией о размере, формате и дате загрузки фото',
 
-  logViewLabel: '📡 Логирование всего',
-  logViewDesc: 'Показывает все логи, события, запросы и ошибки в реальном времени',
+    // ===== OTHER =====
+    replaceMaxLabel: 'Замена Max → MAX',
+    replaceMaxDesc: 'Заменяет все упоминания "Max" на "MAX" в тексте страницы',
 
-  // ===== ЯЗЫК =====
-  languageLabel: 'Язык интерфейса',
-  languageRu: 'Русский',
-  languageEn: 'English',
+    logViewLabel: '📡 Логирование всего',
+    logViewDesc: 'Показывает все логи, события, запросы и ошибки в реальном времени',
 
-  // ===== О МОДЕ =====
-  aboutName: 'kMax Mod',
-  aboutVersion: 'Версия',
-  aboutAuthor: 'Автор',
-  aboutDescription: 'Мод для max.ru с дополнительными функциями для удобства и кастомизации.',
+    // ===== CHATS =====
+    chatTagsLabel: 'Теги для чатов',
+    chatTagsDesc: 'Добавляйте цветные теги к чатам для удобной организации',
 
-  // ===== КНОПКИ =====
-  saveButton: 'Сохранить',
-  resetButton: 'Сбросить все',
-  resetConfirm: 'Вы уверены, что хотите сбросить все настройки?',
-  closeButton: 'Закрыть',
+    templatesLabel: 'Шаблоны ответов',
+    templatesDesc: 'Быстрые ответы через /команда в поле ввода',
 
-  // ===== СТАТУСЫ =====
-  statusActive: 'Активно',
-  statusEnabled: 'Вкл',
-  statusDisabled: 'Выкл',
+    // ===== LANGUAGE =====
+    languageLabel: 'Язык интерфейса',
+    languageRu: 'Русский',
+    languageEn: 'English',
 
-  // ===== ОБЩИЕ ЭЛЕМЕНТЫ UI =====
-  toggleOn: 'Вкл',
-  toggleOff: 'Выкл',
-  backToSettings: '← Назад к настройкам',
+    // ===== ABOUT =====
+    aboutName: 'kMax Mod',
+    aboutVersion: 'Версия',
+    aboutAuthor: 'Автор',
+    aboutDescription: 'Мод для max.ru с дополнительными функциями для удобства и кастомизации.',
 
-  sectionChats: 'Чаты',
-sectionChatsDesc: 'Управление тегами для чатов',
-chatTagsLabel: 'Теги для чатов',
-chatTagsDesc: 'Добавляйте цветные теги к чатам для удобной организации',
-templatesLabel: 'Шаблоны ответов',
-templatesDesc: 'Быстрые ответы через /команда в поле ввода',
+    // ===== BUTTONS =====
+    saveButton: 'Сохранить',
+    resetButton: 'Сбросить все',
+    resetConfirm: 'Вы уверены, что хотите сбросить все настройки?',
+    closeButton: 'Закрыть',
 
+    // ===== STATUSES =====
+    statusActive: 'Активно',
+    statusEnabled: 'Вкл',
+    statusDisabled: 'Выкл',
 
-  // ===== ДОПОЛНИТЕЛЬНО (если понадобится) =====
-  // welcome: 'Добро пожаловать, {name}!',
+    // ===== UI =====
+    toggleOn: 'Вкл',
+    toggleOff: 'Выкл',
+    backToSettings: '← Назад к настройкам',
+
+    // ===== FONT LABELS (SYSTEM) =====
+    fontFamilySystemUI: 'Системный',
+    fontFamilyArial: 'Arial',
+    fontFamilyArialBlack: 'Arial Black',
+    fontFamilyGeorgia: 'Georgia',
+    fontFamilyTimesNewRoman: 'Times New Roman',
+    fontFamilyCourierNew: 'Courier New',
+    fontFamilyVerdana: 'Verdana',
+    fontFamilyTahoma: 'Tahoma',
+    fontFamilyTrebuchetMS: 'Trebuchet MS',
+    fontFamilyImpact: 'Impact',
+    fontFamilyComicSansMS: 'Comic Sans MS',
+    fontFamilyLucidaSans: 'Lucida Sans',
+    fontFamilyGeneva: 'Geneva',
+    fontFamilyPalatino: 'Palatino',
+    fontFamilyBookman: 'Bookman',
+    fontFamilyGaramond: 'Garamond',
+    fontFamilyHelvetica: 'Helvetica',
+    fontFamilyFranklinGothic: 'Franklin Gothic',
+    fontFamilyCenturyGothic: 'Century Gothic',
+    fontFamilyCopperplate: 'Copperplate',
+    fontFamilyBaskerville: 'Baskerville',
+
+    // ===== FONT LABELS (GOOGLE) =====
+    fontFamilyInter: 'Inter',
+    fontFamilyRoboto: 'Roboto',
+    fontFamilyOpenSans: 'Open Sans',
+    fontFamilyMontserrat: 'Montserrat',
+    fontFamilyOswald: 'Oswald',
+    fontFamilyRaleway: 'Raleway',
+    fontFamilyLato: 'Lato',
+    fontFamilyPlayfairDisplay: 'Playfair Display',
+    fontFamilyMerriweather: 'Merriweather',
+    fontFamilyUbuntu: 'Ubuntu',
+    fontFamilyNunito: 'Nunito',
+    fontFamilyPoppins: 'Poppins',
+    fontFamilyQuicksand: 'Quicksand',
+    fontFamilyFiraSans: 'Fira Sans',
+    fontFamilySourceSansPro: 'Source Sans Pro',
+    fontFamilyPTSans: 'PT Sans',
+    fontFamilyIBMPlexSans: 'IBM Plex Sans',
+    fontFamilyManrope: 'Manrope',
+    fontFamilyJetBrainsMono: 'JetBrains Mono',
+    fontFamilyCaveat: 'Caveat',
+    fontFamilyMarckScript: 'Marck Script',
 };

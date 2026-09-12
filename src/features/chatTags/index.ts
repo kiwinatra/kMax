@@ -1,29 +1,47 @@
-// src/features/chatTags/index.ts
+/*
+* @author: potemk.in
+* @brief: Applies colored tags to chats based on their title.
+* @desc: Pure apply-based feature. Registry triggers apply() when chat nodes appear in the DOM batch. Idempotent via WeakSet of processed chat elements and per-container tag check. Enabled state lives inside ChatTagSettings (not a plain boolean). No local observer, no timers.
+*/
 
 import { logger } from '../../core/logger';
-import { storage } from '../../core/storage';
-import { watchDOM } from '../../core/observer';
-import { qsa, createElement } from '../../core/dom';
+import { qsa } from '../../core/dom';
 import { OFFSETS } from '../../offsets';
-import { getChatTags, getTagByChatName, getAllTags, saveChatTags } from './storage';
+import { getChatTags, getTagByChatName, saveChatTags } from './storage';
 import { ChatTag } from './types';
 
-let isEnabled = false;
-let unwatch: (() => void) | null = null;
-let processTimeout: number | null = null;
-const DEBOUNCE_DELAY = 300;
+// ============================================================
+// STATE
+// ============================================================
 
-// Кеш уже обработанных чатов
-const processedChats = new WeakSet<HTMLElement>();
+let isEnabled = false;
+let processedChats = new WeakSet<HTMLElement>();
+
+const CHAT_SELECTORS = [
+    OFFSETS.classes.chatItem,
+    '.wrapper.svelte-q2jdqb',
+    '.cell.svelte-q2jdqb',
+];
+
+const TITLE_SELECTORS = [
+    OFFSETS.classes.chatItemTitle,
+    '.cell .title.svelte-q2jdqb .text.svelte-1riu5uh',
+    '.cell .title .text',
+    '.title .text',
+];
+
+const CONTAINER_SELECTORS = [
+    '.cell .title.svelte-q2jdqb',
+    '.cell .title',
+    '.title',
+];
+
+// ============================================================
+// DOM HELPERS
+// ============================================================
 
 function findChatItems(): HTMLElement[] {
-    const selectors = [
-        OFFSETS.classes.chatItem,
-        '.wrapper.svelte-q2jdqb',
-        '.cell.svelte-q2jdqb',
-    ];
-    
-    for (const selector of selectors) {
+    for (const selector of CHAT_SELECTORS) {
         const items = qsa<HTMLElement>(selector);
         if (items.length > 0) return items;
     }
@@ -31,36 +49,16 @@ function findChatItems(): HTMLElement[] {
 }
 
 function getChatTitle(chatElement: HTMLElement): string {
-    const selectors = [
-        OFFSETS.classes.chatItemTitle,
-        '.cell .title.svelte-q2jdqb .text.svelte-1riu5uh',
-        '.cell .title .text',
-        '.title .text',
-    ];
-    
-    for (const selector of selectors) {
-        const titleEl = chatElement.querySelector(selector);
-        if (titleEl) {
-            return titleEl.textContent?.trim() || '';
-        }
+    for (const selector of TITLE_SELECTORS) {
+        const el = chatElement.querySelector(selector);
+        if (el) return el.textContent?.trim() || '';
     }
-    
     const titleEl = chatElement.querySelector('.title');
-    if (titleEl) {
-        return titleEl.textContent?.trim() || '';
-    }
-    
-    return '';
+    return titleEl ? titleEl.textContent?.trim() || '' : '';
 }
 
 function getChatContainer(chatElement: HTMLElement): HTMLElement | null {
-    const selectors = [
-        '.cell .title.svelte-q2jdqb',
-        '.cell .title',
-        '.title',
-    ];
-    
-    for (const selector of selectors) {
+    for (const selector of CONTAINER_SELECTORS) {
         const container = chatElement.querySelector<HTMLElement>(selector);
         if (container) return container;
     }
@@ -92,86 +90,94 @@ function createTagElement(tag: ChatTag): HTMLElement {
     return tagEl;
 }
 
-function applyTagToChat(chatElement: HTMLElement): void {
-    if (processedChats.has(chatElement)) return;
-    
+// ============================================================
+// APPLICATION
+// ============================================================
+
+function applyTagToChat(chatElement: HTMLElement): boolean {
+    if (processedChats.has(chatElement)) return false;
+
     const title = getChatTitle(chatElement);
-    if (!title) return;
-    
+    if (!title) return false;
+
     const tag = getTagByChatName(title);
-    if (!tag) return;
-    
+    if (!tag) return false;
+
     const container = getChatContainer(chatElement);
-    if (!container) return;
-    
-    if (container.querySelector('.kmod-chat-tag')) return;
-    
-    const tagEl = createTagElement(tag);
-    container.appendChild(tagEl);
+    if (!container) return false;
+
+    if (container.querySelector('.kmod-chat-tag')) {
+        processedChats.add(chatElement);
+        return false;
+    }
+
+    container.appendChild(createTagElement(tag));
     processedChats.add(chatElement);
-    
     logger.debug(`🏷️ Tag "${tag.tagName}" applied to chat: ${title}`);
+    return true;
 }
 
 function processPage(): void {
     const settings = getChatTags();
     if (!settings.enabled) return;
     if (settings.tags.length === 0) return;
-    
+
     const chatItems = findChatItems();
     if (chatItems.length === 0) return;
-    
+
     let applied = 0;
     for (const chat of chatItems) {
-        if (!processedChats.has(chat)) {
-            applyTagToChat(chat);
-            applied++;
-        }
+        if (applyTagToChat(chat)) applied++;
     }
-    
+
     if (applied > 0) {
         logger.debug(`🏷️ Applied ${applied} chat tags`);
     }
 }
 
-function debouncedProcess(): void {
-    if (processTimeout) {
-        clearTimeout(processTimeout);
-    }
-    processTimeout = window.setTimeout(() => {
-        processTimeout = null;
-        processPage();
-    }, DEBOUNCE_DELAY);
+function removeAllTags(): void {
+    document.querySelectorAll('.kmod-chat-tag').forEach((el) => el.remove());
+    processedChats = new WeakSet();
 }
 
+// ============================================================
+// PUBLIC API
+// ============================================================
+
+/** Idempotent — reads current ChatTagSettings and applies matching tags. */
 export function apply(): void {
+    if (!getChatTags().enabled) {
+        removeAllTags();
+        return;
+    }
     processPage();
 }
 
 export function enable(): void {
     if (isEnabled) return;
     isEnabled = true;
+
+    const settings = getChatTags();
+    if (!settings.enabled) {
+        settings.enabled = true;
+        saveChatTags(settings);
+    }
+
     logger.info('🏷️ Chat tags enabled');
     processPage();
-    if (!unwatch) {
-        unwatch = watchDOM(() => {
-            debouncedProcess();
-        });
-    }
 }
 
 export function disable(): void {
     if (!isEnabled) return;
     isEnabled = false;
-    if (unwatch) {
-        unwatch();
-        unwatch = null;
+
+    const settings = getChatTags();
+    if (settings.enabled) {
+        settings.enabled = false;
+        saveChatTags(settings);
     }
-    if (processTimeout) {
-        clearTimeout(processTimeout);
-        processTimeout = null;
-    }
-    document.querySelectorAll('.kmod-chat-tag').forEach(el => el.remove());
+
+    removeAllTags();
     logger.info('🏷️ Chat tags disabled');
 }
 
@@ -180,16 +186,22 @@ export function toggle(): boolean {
     const newState = !settings.enabled;
     settings.enabled = newState;
     saveChatTags(settings);
-    if (newState) enable(); else disable();
+
+    if (newState) enable();
+    else disable();
     return newState;
 }
 
-// ===== ИСПРАВЛЕНО: isFeatureEnabled вместо isEnabled =====
 export function isFeatureEnabled(): boolean {
     return isEnabled;
 }
 
-// Очистка
-window.addEventListener('beforeunload', () => {
-    if (unwatch) { unwatch(); unwatch = null; }
-});
+// ============================================================
+// CLEANUP
+// ============================================================
+
+if (typeof window !== 'undefined') {
+    window.addEventListener('beforeunload', () => {
+        processedChats = new WeakSet();
+    });
+}

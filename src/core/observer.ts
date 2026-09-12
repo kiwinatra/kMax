@@ -1,47 +1,146 @@
 /*
 * @author: potemk.in
-* @brief: DOM mutation observer with batched callbacks, idle management, and self-change ignoring.
-* @desc: This file implements a MutationObserver wrapper that manages DOM change detection with performance optimizations including RAF batching, idle timeout for automatic pausing, and the ability to ignore mutations caused by the mod itself. Multiple callbacks can be registered and unregistered dynamically.
+* @brief: Centralized DOM mutation observer with rAF batching, idle management, and selective node processing.
+* @desc: A single global MutationObserver that dispatches batched callbacks once per animation frame. Callbacks receive the list of added nodes so features can process only what changed instead of re-scanning the whole document. Supports pause/resume, idle timeout, and a self-update guard to ignore mutations produced by the mod itself.
 */
 
-type ObserverCallback = () => void;
-
-let observer: MutationObserver | null = null;
-let callbacks: ObserverCallback[] = [];
-let isObserving = false;
-let rafId: number | null = null;
-let pendingMutations = false;
-let idleTimer: number | null = null;
-const IDLE_TIMEOUT = 5000;
-
-const DEFAULT_OPTIONS: MutationObserverInit = {
-    childList: true,
-    subtree: true,
-    characterData: false,
-    attributes: false,
-};
-
-let isUpdating = false;
-
-// Function for resuming the observer
-function resumeObserver(): void {
-    if (!observer || isObserving) return;
-    try {
-        observer.observe(document.body, DEFAULT_OPTIONS);
-        isObserving = true;
-    } catch {}
+export interface ObserverBatch {
+    /** Nodes newly added anywhere in the tree this frame. */
+    addedNodes: Node[];
+    /** Text nodes whose content changed this frame. */
+    characterDataNodes: Node[];
+    /** Elements whose tracked attributes changed this frame. */
+    attributeNodes: Element[];
+    /** Raw records for advanced use cases. */
+    records: MutationRecord[];
 }
 
-// Function for pausing the observer
+export type ObserverCallback = (batch: ObserverBatch) => void;
+
+interface Subscriber {
+    id: number;
+    callback: ObserverCallback;
+    /** Optional: only call this subscriber when one of these selectors matches an added node. */
+    filterSelectors?: string[];
+}
+
+// ============================================================
+// STATE
+// ============================================================
+
+let observer: MutationObserver | null = null;
+let subscribers: Subscriber[] = [];
+let nextId = 1;
+let isObserving = false;
+let rafId: number | null = null;
+let idleTimer: number | null = null;
+let isUpdating = false;
+
+/** Accumulates nodes between frames. */
+let pendingAdded: Node[] = [];
+let pendingCharacterData: Node[] = [];
+let pendingAttributes: Element[] = [];
+let pendingRecords: MutationRecord[] = [];
+let pendingDirty = false;
+
+const IDLE_TIMEOUT = 10000; // pause observer if no DOM changes for 10s
+const MAX_BATCH_NODES = 2000; // hard cap to avoid runaway memory in pathological cases
+
+const OBSERVER_OPTIONS: MutationObserverInit = {
+    childList: true,
+    subtree: true,
+    characterData: true,
+    attributes: true,
+    attributeFilter: ['class', 'style', 'src', 'data-*'],
+};
+
+// ============================================================
+// SUBSCRIPTION
+// ============================================================
+
+/**
+ * Register a callback to be invoked on every batched DOM change.
+ * Returns an unsubscribe function.
+ */
+export function watchDOM(callback: ObserverCallback, filterSelectors?: string[]): () => void {
+    const sub: Subscriber = { id: nextId++, callback, filterSelectors };
+    subscribers.push(sub);
+    resumeObserver();
+    resetIdleTimer();
+
+    return () => {
+        subscribers = subscribers.filter(s => s.id !== sub.id);
+        if (subscribers.length === 0) {
+            stopObserver();
+        }
+    };
+}
+
+/**
+ * Remove one or all subscribers.
+ */
+export function unwatchDOM(callback?: ObserverCallback): void {
+    if (callback) {
+        subscribers = subscribers.filter(s => s.callback !== callback);
+    } else {
+        subscribers = [];
+    }
+    if (subscribers.length === 0) {
+        stopObserver();
+    }
+}
+
+// ============================================================
+// OBSERVER LIFECYCLE
+// ============================================================
+
+function startObserver(): void {
+    if (observer || isObserving) return;
+    try {
+        observer = new MutationObserver(onMutations);
+        observer.observe(document.body, OBSERVER_OPTIONS);
+        isObserving = true;
+    } catch (error) {
+        console.error('[KMOD] Failed to start observer:', error);
+        observer = null;
+        isObserving = false;
+    }
+}
+
+function stopObserver(): void {
+    if (!observer) return;
+    try {
+        observer.disconnect();
+    } catch {}
+    observer = null;
+    isObserving = false;
+    pendingAdded = [];
+    pendingCharacterData = [];
+    pendingAttributes = [];
+    pendingRecords = [];
+    pendingDirty = false;
+    if (rafId) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+    }
+    if (idleTimer) {
+        clearTimeout(idleTimer);
+        idleTimer = null;
+    }
+}
+
+function resumeObserver(): void {
+    startObserver();
+}
+
 function pauseObserver(): void {
     if (!observer || !isObserving) return;
     try {
         observer.disconnect();
-        isObserving = false;
     } catch {}
+    isObserving = false;
 }
 
-// Function for resetting the idle timer
 function resetIdleTimer(): void {
     if (idleTimer) {
         clearTimeout(idleTimer);
@@ -49,126 +148,118 @@ function resetIdleTimer(): void {
     }
     idleTimer = window.setTimeout(() => {
         idleTimer = null;
-        if (callbacks.length === 0) {
+        // Pause only if tab is hidden or no subscribers
+        if (subscribers.length === 0 || document.visibilityState === 'hidden') {
             pauseObserver();
         }
     }, IDLE_TIMEOUT);
 }
 
-// Function for starting DOM observation with a callback
-export function watchDOM(callback: ObserverCallback): () => void {
-    callbacks.push(callback);
-    resumeObserver();
+// ============================================================
+// MUTATION HANDLING
+// ============================================================
+
+function onMutations(records: MutationRecord[]): void {
+    // Ignore mutations we caused ourselves (avoid feedback loops)
+    if (isUpdating) return;
+
     resetIdleTimer();
 
-    if (!observer) {
-        observer = new MutationObserver((mutations) => {
-            if (isUpdating) return;
-
-            resetIdleTimer();
-            if (!pendingMutations) {
-                pendingMutations = true;
-                if (rafId) cancelAnimationFrame(rafId);
-                rafId = requestAnimationFrame(() => {
-                    rafId = null;
-                    pendingMutations = false;
-                    for (const cb of callbacks) {
-                        try {
-                            cb();
-                        } catch (error) {
-                            console.error('[KMOD] Observer callback error:', error);
-                        }
-                    }
-                });
+    for (const rec of records) {
+        if (rec.type === 'childList') {
+            for (const n of rec.addedNodes) {
+                if (pendingAdded.length < MAX_BATCH_NODES) {
+                    pendingAdded.push(n);
+                }
             }
-        });
-        try {
-            observer.observe(document.body, DEFAULT_OPTIONS);
-            isObserving = true;
-        } catch (error) {
-            console.error('[KMOD] Failed to start observer:', error);
-            observer = null;
-            isObserving = false;
+        } else if (rec.type === 'characterData' && rec.target) {
+            if (pendingCharacterData.length < MAX_BATCH_NODES) {
+                pendingCharacterData.push(rec.target);
+            }
+        } else if (rec.type === 'attributes' && rec.target instanceof Element) {
+            if (pendingAttributes.length < MAX_BATCH_NODES) {
+                pendingAttributes.push(rec.target);
+            }
         }
+        pendingRecords.push(rec);
     }
 
-    return () => {
-        callbacks = callbacks.filter(cb => cb !== callback);
-        if (callbacks.length === 0) {
-            if (rafId) {
-                cancelAnimationFrame(rafId);
-                rafId = null;
-            }
-            pendingMutations = false;
-            pauseObserver();
-            if (idleTimer) {
-                clearTimeout(idleTimer);
-                idleTimer = null;
-            }
-        }
+    pendingDirty = true;
+
+    if (!rafId) {
+        rafId = requestAnimationFrame(flush);
+    }
+}
+
+function flush(): void {
+    rafId = null;
+    if (!pendingDirty) return;
+
+    const batch: ObserverBatch = {
+        addedNodes: pendingAdded,
+        characterDataNodes: pendingCharacterData,
+        attributeNodes: pendingAttributes,
+        records: pendingRecords,
     };
-}
 
-// Function for unregistering one or all callbacks
-export function unwatchDOM(callback?: ObserverCallback): void {
-    if (callback) {
-        callbacks = callbacks.filter(cb => cb !== callback);
-    } else {
-        callbacks = [];
-    }
-    if (callbacks.length === 0 && observer) {
-        pauseObserver();
-        if (idleTimer) {
-            clearTimeout(idleTimer);
-            idleTimer = null;
+    // Reset buffers before dispatch so callbacks that trigger mutations
+    // during the call don't pollute this batch.
+    pendingAdded = [];
+    pendingCharacterData = [];
+    pendingAttributes = [];
+    pendingRecords = [];
+    pendingDirty = false;
+
+    // Snapshot subscribers in case one unsubscribes during iteration.
+    const snapshot = subscribers.slice();
+    for (const sub of snapshot) {
+        try {
+            if (sub.filterSelectors && sub.filterSelectors.length > 0) {
+                if (!matchesAny(batch.addedNodes, sub.filterSelectors)) {
+                    continue;
+                }
+            }
+            sub.callback(batch);
+        } catch (error) {
+            console.error('[KMOD] Observer callback error:', error);
         }
-        if (rafId) {
-            cancelAnimationFrame(rafId);
-            rafId = null;
+    }
+}
+
+/** Returns true if any added node (or descendant) matches one of the selectors. */
+function matchesAny(nodes: Node[], selectors: string[]): boolean {
+    for (const node of nodes) {
+        if (!(node instanceof Element)) {
+            if (node.parentElement) {
+                for (const sel of selectors) {
+                    try {
+                        if (node.parentElement.matches(sel)) return true;
+                    } catch {}
+                }
+            }
+            continue;
         }
-        pendingMutations = false;
+        for (const sel of selectors) {
+            try {
+                if (node.matches(sel) || node.querySelector(sel)) return true;
+            } catch {}
+        }
     }
+    return false;
 }
 
-// Function for checking if the observer is active
-export function isObserverActive(): boolean {
-    return isObserving && observer !== null;
-}
+// ============================================================
+// SELF-UPDATE GUARD
+// ============================================================
 
-// Function for getting the number of registered callbacks
-export function getObserverCallbackCount(): number {
-    return callbacks.length;
-}
-
-// Function for clearing all observers
-export function clearObservers(): void {
-    callbacks = [];
-    if (observer) {
-        pauseObserver();
-        observer = null;
-    }
-    if (rafId) {
-        cancelAnimationFrame(rafId);
-        rafId = null;
-    }
-    pendingMutations = false;
-    if (idleTimer) {
-        clearTimeout(idleTimer);
-        idleTimer = null;
-    }
-}
-
-// Function for marking the start of a self-initiated update
 export function startUpdating(): void {
     isUpdating = true;
 }
 
-// Function for marking the end of a self-initiated update
 export function endUpdating(): void {
     isUpdating = false;
 }
 
-// Function for executing a function while ignoring DOM changes
 export function withUpdating<T>(fn: () => T): T {
     startUpdating();
     try {
@@ -176,4 +267,34 @@ export function withUpdating<T>(fn: () => T): T {
     } finally {
         endUpdating();
     }
+}
+
+// ============================================================
+// INTROSPECTION
+// ============================================================
+
+export function isObserverActive(): boolean {
+    return isObserving && observer !== null;
+}
+
+export function getObserverCallbackCount(): number {
+    return subscribers.length;
+}
+
+export function clearObservers(): void {
+    subscribers = [];
+    stopObserver();
+}
+
+// ============================================================
+// VISIBILITY INTEGRATION
+// ============================================================
+
+if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible' && subscribers.length > 0) {
+            resumeObserver();
+            resetIdleTimer();
+        }
+    });
 }

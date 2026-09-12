@@ -1,10 +1,17 @@
 /*
 * @author: potemk.in
-* @brief: Application configuration, default settings, selectors, storage keys, and validation utilities.
-* @desc: This file defines the core configuration constants including app metadata, default settings, DOM selectors from OFFSETS, storage keys, and type definitions. It also provides validation functions to ensure all selectors and text values are properly defined at runtime.
+* @brief: App config, default settings, selectors, storage keys, validators.
+* @desc: Central configuration module. Selectors/texts/storage-keys are aliases
+*       into OFFSETS so there's a single source of truth. Validation runs once
+*       on module load and warns only for missing values — no double-checking
+*       at every call site.
 */
 
 import { OFFSETS } from './offsets';
+
+// ============================================================
+// APP
+// ============================================================
 
 export const CONFIG = {
     name: 'kMax Mod',
@@ -12,6 +19,10 @@ export const CONFIG = {
     author: 'kiwinatra потемкин короче',
     site: 'max.ru',
 } as const;
+
+// ============================================================
+// DEFAULTS
+// ============================================================
 
 export const DEFAULT_SETTINGS = {
     hideStories: false,
@@ -26,6 +37,10 @@ export const DEFAULT_SETTINGS = {
     logView: false,
     fontFamily: 'system-ui, -apple-system, sans-serif',
 } as const;
+
+// ============================================================
+// ALIASES INTO OFFSETS
+// ============================================================
 
 export const SELECTORS = {
     name: OFFSETS.classes.name,
@@ -61,41 +76,47 @@ export const STORAGE_KEYS = {
     templates: 'templates',
 } as const;
 
+// ============================================================
+// TYPES
+// ============================================================
+
 export type Settings = typeof DEFAULT_SETTINGS;
 export type SettingKey = keyof Settings;
 export type Language = Settings['language'];
 export type StorageKey = keyof typeof STORAGE_KEYS;
 
-// Function for checking if a string is a valid setting key
+// ============================================================
+// GUARDS / HELPERS
+// ============================================================
+
 export function isValidSettingKey(key: string): key is SettingKey {
     return key in DEFAULT_SETTINGS;
 }
 
-// Function for retrieving the default value for a setting
 export function getDefaultSetting<K extends SettingKey>(key: K): Settings[K] {
     return DEFAULT_SETTINGS[key];
 }
 
-// Function for checking if a language code is valid
 export function isValidLanguage(lang: string): lang is Language {
     return lang === 'ru' || lang === 'en';
 }
 
-// Function for retrieving all setting keys
 export function getAllSettingKeys(): SettingKey[] {
     return Object.keys(DEFAULT_SETTINGS) as SettingKey[];
 }
 
-// Function for retrieving all storage keys
 export function getAllStorageKeys(): StorageKey[] {
     return Object.keys(STORAGE_KEYS) as StorageKey[];
 }
 
-// Function for validating that all selectors are non-empty
+// ============================================================
+// VALIDATION (runs once on module load)
+// ============================================================
+
 export function validateSelectors(): boolean {
     let valid = true;
     for (const [key, value] of Object.entries(SELECTORS)) {
-        if (!value || (value as string).length === 0) {
+        if (!value) {
             console.warn(`[KMOD] Empty selector: ${key}`);
             valid = false;
         }
@@ -103,11 +124,10 @@ export function validateSelectors(): boolean {
     return valid;
 }
 
-// Function for validating that all text constants are non-empty
 export function validateTexts(): boolean {
     let valid = true;
     for (const [key, value] of Object.entries(TEXTS)) {
-        if (!value || (value as string).length === 0) {
+        if (!value) {
             console.warn(`[KMOD] Empty text: ${key}`);
             valid = false;
         }
@@ -116,11 +136,14 @@ export function validateTexts(): boolean {
 }
 
 if (typeof window !== 'undefined') {
-    const isValid = validateSelectors() && validateTexts();
-    if (!isValid) {
+    if (!validateSelectors() || !validateTexts()) {
         console.warn('[KMOD] Some selectors or texts are empty. Features may not work correctly.');
     }
 }
+
+// ============================================================
+// DEFAULT EXPORT
+// ============================================================
 
 export default {
     CONFIG,

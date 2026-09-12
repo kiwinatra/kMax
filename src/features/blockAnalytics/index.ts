@@ -1,58 +1,361 @@
-// src/features/blockAnalytics.ts
-import { logger } from '../../core/logger'
+/*
+* @author: potemk.in
+* @brief: Replaces AppTracer SDK identifiers with fake ones and blocks tracker requests.
+* @desc: Rewritten for safe, reversible interception. All native APIs are restored on disable. Tracer detection is strict — only known AppTracer hosts/paths/keys, no broad "id"/"user"/"session" matching. localStorage and cookie cleanup touches only tracer-prefixed keys, never anything else. Kills a small, well-defined set of global tracer objects.
+*/
+
+import { logger } from '../../core/logger';
 import { storage } from '../../core/storage';
 
+// ============================================================
+// CONSTANTS
+// ============================================================
+
+/** Hosts/paths that belong to AppTracer. Anything else is left alone. */
+const TRACER_URL_PATTERNS = [
+    'apptracer.ru',
+    'apptracer.',
+    'sdk-api.apptracer.ru',
+    '/perf/upload',
+    'uploadBatch',
+    'uploadSession',
+    'uploadSessionInfo',
+];
+
+/** Exact localStorage keys we consider tracer-owned. */
+const TRACER_STORAGE_KEYS = new Set([
+    'tracer_device_id',
+    'tracer_session_id',
+    'tracer_user_id',
+    'apptracer_device',
+    'apptracer_session',
+    'apptracer_user',
+    'crash_token',
+    'track_session',
+]);
+
+/** Exact cookie names we consider tracer-owned. */
+const TRACER_COOKIE_NAMES = new Set([
+    'tracer_device_id',
+    'tracer_session_id',
+    'tracer_user_id',
+    'apptracer',
+    'crash_token',
+]);
+
+/** Global objects created by the AppTracer SDK. We neutralize them. */
+const TRACER_GLOBALS = [
+    'TracerSDK2',
+    'tracerMain',
+    'Tracer',
+    'tracer',
+    'tracerInstance',
+];
+
+// ============================================================
+// STATE
+// ============================================================
+
 let isBlocking = false;
+
 let fakeDeviceId = '';
 let fakeSessionId = '';
 let fakeUserId = '';
 let requestCounter = 0;
 
+interface Originals {
+    xhrOpen: typeof XMLHttpRequest.prototype.open;
+    xhrSend: typeof XMLHttpRequest.prototype.send;
+    xhrSetHeader: typeof XMLHttpRequest.prototype.setRequestHeader;
+    fetch: typeof window.fetch;
+    beacon: typeof navigator.sendBeacon;
+    getItem: typeof localStorage.getItem;
+    setItem: typeof localStorage.setItem;
+    removeItem: typeof localStorage.removeItem;
+    cookieDescriptor: PropertyDescriptor | undefined;
+    globals: Map<string, unknown>;
+}
+
+let originals: Originals | null = null;
+
+// ============================================================
+// FAKE ID GENERATOR
+// ============================================================
+
 function generateFakeId(): string {
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-        const r = Math.random() * 16 | 0;
-        const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+        const r = (Math.random() * 16) | 0;
+        const v = c === 'x' ? r : (r & 0x3) | 0x8;
         return v.toString(16);
     });
 }
 
 // ============================================================
-// ИСПРАВЛЕНО: НЕ ТРОГАЕМ KMOD-КЛЮЧИ
+// DETECTION (strict)
 // ============================================================
-function isTracerKey(key: string): boolean {
-    if (!key) return false;
-    
-    // ← ЗАЩИТА: ПРОПУСКАЕМ KMOD-КЛЮЧИ
-    if (key.startsWith('kmod_')) return false;
-    if (key.startsWith('kmod-')) return false;
-    
-    const lower = key.toLowerCase();
-    return lower.includes('tracer') ||
-           lower.includes('apptracer') ||
-           lower.includes('device') ||
-           lower.includes('session') ||
-           lower.includes('user') ||
-           lower.includes('id') ||
-           lower.includes('uuid');
-}
 
-function isAppTracer(url: string): boolean {
+function isTracerUrl(url: string): boolean {
     if (!url) return false;
     const lower = url.toLowerCase();
-    return lower.includes('apptracer') || lower.includes('sdk-api.apptracer.ru');
+    for (const pattern of TRACER_URL_PATTERNS) {
+        if (lower.includes(pattern)) return true;
+    }
+    return false;
 }
 
-function logFake(method: string, url: string, data: any): void {
-    requestCounter++;
-    console.group(`%c🔍 [#${requestCounter}] ${method} → ${url}`, 'color: #60a5fa; font-weight: bold;');
-    console.log(`%c  Device: ${fakeDeviceId}`, 'color: #34d399;');
-    console.log(`%c  Session: ${fakeSessionId}`, 'color: #34d399;');
-    console.log(`%c  User: ${fakeUserId}`, 'color: #34d399;');
-    if (data) {
-        console.log('  Data:', data);
-    }
-    console.groupEnd();
+function isTracerStorageKey(key: string): boolean {
+    if (!key) return false;
+    if (key.startsWith('kmod_')) return false;
+    if (key.startsWith('kmod-')) return false;
+    return TRACER_STORAGE_KEYS.has(key);
 }
+
+function isTracerCookie(name: string): boolean {
+    if (!name) return false;
+    if (name.startsWith('kmod_')) return false;
+    return TRACER_COOKIE_NAMES.has(name);
+}
+
+function logFake(method: string, url: string, data?: unknown): void {
+    requestCounter++;
+    logger.debug(`🕵️ [#${requestCounter}] ${method} → ${url}`, data ?? '');
+}
+
+// ============================================================
+// XHR INTERCEPTION
+// ============================================================
+
+const xhrMeta = new WeakMap<XMLHttpRequest, { method: string; url: string }>();
+
+function patchXHR(): void {
+    if (!originals) return;
+
+    const origOpen = originals.xhrOpen;
+    const origSend = originals.xhrSend;
+    const origSetHeader = originals.xhrSetHeader;
+
+    XMLHttpRequest.prototype.open = function (
+        this: XMLHttpRequest,
+        method: string,
+        url: string | URL,
+        ...rest: any[]
+    ) {
+        xhrMeta.set(this, { method, url: String(url) });
+        // @ts-expect-error passthrough
+        return origOpen.apply(this, [method, url, ...rest]);
+    };
+
+    XMLHttpRequest.prototype.setRequestHeader = function (
+        this: XMLHttpRequest,
+        header: string,
+        value: string
+    ) {
+        const meta = xhrMeta.get(this);
+        if (meta && isTracerUrl(meta.url)) return;
+        return origSetHeader.call(this, header, value);
+    };
+
+    XMLHttpRequest.prototype.send = function (this: XMLHttpRequest, body?: any) {
+        const meta = xhrMeta.get(this);
+        if (meta && isTracerUrl(meta.url)) {
+            logFake('XHR', meta.url, body);
+        }
+        return origSend.call(this, body);
+    };
+}
+
+// ============================================================
+// FETCH / BEACON
+// ============================================================
+
+function patchFetch(): void {
+    if (!originals) return;
+    const origFetch = originals.fetch;
+
+    window.fetch = function (
+        input: RequestInfo | URL,
+        init?: RequestInit
+    ): Promise<Response> {
+        const url =
+            typeof input === 'string'
+                ? input
+                : input instanceof URL
+                ? input.href
+                : (input as Request).url;
+
+        if (isTracerUrl(url)) logFake('FETCH', url, init?.body);
+        return origFetch(input, init);
+    } as typeof window.fetch;
+}
+
+function patchBeacon(): void {
+    if (!originals) return;
+    const orig = originals.beacon;
+
+    navigator.sendBeacon = function (
+        url: string | URL,
+        data?: any
+    ): boolean {
+        const urlStr = String(url);
+        if (isTracerUrl(urlStr)) logFake('BEACON', urlStr, data);
+        return orig(url, data);
+    } as typeof navigator.sendBeacon;
+}
+
+// ============================================================
+// STORAGE / COOKIES
+// ============================================================
+
+function patchLocalStorage(): void {
+    if (!originals) return;
+    const { getItem, setItem, removeItem } = originals;
+
+    Storage.prototype.getItem = function (this: Storage, key: string): string | null {
+        if (isTracerStorageKey(key)) {
+            const lower = key.toLowerCase();
+            if (lower.includes('device')) return fakeDeviceId;
+            if (lower.includes('session')) return fakeSessionId;
+            if (lower.includes('user')) return fakeUserId;
+            return generateFakeId();
+        }
+        return getItem.call(this, key);
+    };
+
+    Storage.prototype.setItem = function (
+        this: Storage,
+        key: string,
+        value: string
+    ): void {
+        if (isTracerStorageKey(key)) return;
+        setItem.call(this, key, value);
+    };
+
+    Storage.prototype.removeItem = function (this: Storage, key: string): void {
+        if (isTracerStorageKey(key)) return;
+        removeItem.call(this, key);
+    };
+}
+
+function patchCookies(): void {
+    const desc = originals?.cookieDescriptor;
+    if (!desc || !desc.get || !desc.set) return;
+
+    const origGet = desc.get;
+    const origSet = desc.set;
+
+    Object.defineProperty(document, 'cookie', {
+        get() {
+            const cookies = origGet.call(document);
+            if (typeof cookies !== 'string') return cookies;
+            return cookies
+                .split(';')
+                .filter((c) => {
+                    const name = c.trim().split('=')[0] || '';
+                    return !isTracerCookie(name);
+                })
+                .join(';');
+        },
+        set(value: string) {
+            const name = value.split('=')[0]?.trim() || '';
+            if (isTracerCookie(name)) return;
+            origSet.call(document, value);
+        },
+        configurable: true,
+    });
+}
+
+// ============================================================
+// GLOBALS
+// ============================================================
+
+function killGlobals(): void {
+    if (!originals) return;
+
+    for (const name of TRACER_GLOBALS) {
+        try {
+            const w = window as any;
+            if (typeof w[name] === 'undefined') continue;
+            originals.globals.set(name, w[name]);
+            try {
+                delete w[name];
+            } catch {
+                w[name] = undefined;
+            }
+        } catch {}
+    }
+}
+
+function restoreGlobals(): void {
+    if (!originals) return;
+    for (const [name, value] of originals.globals) {
+        try {
+            (window as any)[name] = value;
+        } catch {}
+    }
+    originals.globals.clear();
+}
+
+// ============================================================
+// CONSOLE NOISE FILTER
+// ============================================================
+
+let origConsoleError: typeof console.error | null = null;
+
+function patchConsole(): void {
+    if (origConsoleError) return;
+    origConsoleError = console.error;
+
+    console.error = function (...args: unknown[]) {
+        const str = args.map(String).join(' ');
+        if (
+            str.includes('apptracer') ||
+            str.includes('TracerSDK') ||
+            str.includes('setRequestHeader') ||
+            str.includes('state must be OPENED')
+        ) {
+            return;
+        }
+        origConsoleError!.apply(console, args as any);
+    };
+}
+
+function restoreConsole(): void {
+    if (origConsoleError) {
+        console.error = origConsoleError;
+        origConsoleError = null;
+    }
+}
+
+// ============================================================
+// CLEANUP EXISTING TRACER DATA
+// ============================================================
+
+function purgeExisting(): void {
+    // localStorage — exact keys only
+    try {
+        for (let i = localStorage.length - 1; i >= 0; i--) {
+            const key = localStorage.key(i);
+            if (key && isTracerStorageKey(key)) {
+                originals!.removeItem.call(localStorage, key);
+            }
+        }
+    } catch {}
+
+    // cookies — exact names only
+    try {
+        const cookies = document.cookie.split(';');
+        for (const c of cookies) {
+            const name = c.trim().split('=')[0] || '';
+            if (isTracerCookie(name)) {
+                document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;`;
+            }
+        }
+    } catch {}
+}
+
+// ============================================================
+// ENABLE / DISABLE
+// ============================================================
 
 export function enable(): void {
     if (isBlocking) return;
@@ -62,290 +365,67 @@ export function enable(): void {
     fakeSessionId = generateFakeId();
     fakeUserId = generateFakeId();
 
-    logger.info('🔥 ПОДМЕНА ID ТРЕКЕРА ВКЛЮЧЕНА');
-    logger.debug(`📊 Device: ${fakeDeviceId}`);
-    logger.debug(`📊 Session: ${fakeSessionId}`);
-    logger.debug(`📊 User: ${fakeUserId}`);
-
-    // ===== 1. ПЕРЕХВАТ XMLHttpRequest С ПОДАВЛЕНИЕМ ОШИБОК =====
-    const origXHR = window.XMLHttpRequest;
-    const xhr = function(this: any, ...args: any[]) {
-        const instance = new (origXHR as any)(...args);
-        let url = '';
-        let isSync = false;
-        let isBlockedRequest = false;
-
-        const origOpen = instance.open;
-        instance.open = function(method: string, u: string | URL, async: boolean = true, user?: string, password?: string) {
-            url = typeof u === 'string' ? u : u.href;
-            isSync = !async;
-            isBlockedRequest = isAppTracer(url);
-            
-            if (isBlockedRequest) {
-                logFake('XHR.open', url, { method, async, isSync });
-            }
-            origOpen.call(instance, method, u, async, user, password);
-        };
-
-        // ===== КЛЮЧЕВОЙ МОМЕНТ: ПЕРЕХВАТ responseType =====
-        const origSetResponseType = Object.getOwnPropertyDescriptor(instance, 'responseType')?.set;
-        if (origSetResponseType) {
-            Object.defineProperty(instance, 'responseType', {
-                set: function(value: string) {
-                    if (isBlockedRequest && isSync) {
-                        logger.debug(`🧹 responseType игнорирован: ${value} (sync request)`);
-                        return;
-                    }
-                    origSetResponseType.call(this, value);
-                },
-                get: function() {
-                    return this._responseType || '';
-                },
-                configurable: true
-            });
-        }
-
-        // ===== КЛЮЧЕВОЙ МОМЕНТ: ПЕРЕХВАТ timeout =====
-        const origSetTimeout = Object.getOwnPropertyDescriptor(instance, 'timeout')?.set;
-        if (origSetTimeout) {
-            Object.defineProperty(instance, 'timeout', {
-                set: function(value: number) {
-                    if (isBlockedRequest && isSync) {
-                        logger.debug(`🧹 timeout игнорирован: ${value} (sync request)`);
-                        return;
-                    }
-                    origSetTimeout.call(this, value);
-                },
-                get: function() {
-                    return this._timeout || 0;
-                },
-                configurable: true
-            });
-        }
-
-        const origSend = instance.send;
-        instance.send = function(body?: any) {
-            if (isBlockedRequest) {
-                logFake('XHR.send', url, body);
-            }
-            origSend.call(instance, body);
-        };
-
-        const origSetHeader = instance.setRequestHeader;
-        instance.setRequestHeader = function(header: string, value: string) {
-            if (isBlockedRequest) {
-                // Просто игнорируем
-                return;
-            }
-            origSetHeader.call(instance, header, value);
-        };
-
-        return instance;
-    };
-    (window as any).XMLHttpRequest = xhr;
-    (window as any).XMLHttpRequest.prototype = (origXHR as any).prototype;
-
-    // ===== 2. ПЕРЕХВАТ localStorage =====
-    const origGetItem = localStorage.getItem.bind(localStorage);
-    localStorage.getItem = function(key: string): string | null {
-        if (isTracerKey(key)) {
-            const lower = key.toLowerCase();
-            let result = null;
-            if (lower.includes('device')) result = fakeDeviceId;
-            else if (lower.includes('session')) result = fakeSessionId;
-            else if (lower.includes('user')) result = fakeUserId;
-            else result = generateFakeId();
-            logger.debug(`🧹 getItem(${key}) → ${result}`);
-            return result;
-        }
-        return origGetItem(key);
+    originals = {
+        xhrOpen: XMLHttpRequest.prototype.open,
+        xhrSend: XMLHttpRequest.prototype.send,
+        xhrSetHeader: XMLHttpRequest.prototype.setRequestHeader,
+        fetch: window.fetch,
+        beacon: navigator.sendBeacon,
+        getItem: Storage.prototype.getItem,
+        setItem: Storage.prototype.setItem,
+        removeItem: Storage.prototype.removeItem,
+        cookieDescriptor: Object.getOwnPropertyDescriptor(Document.prototype, 'cookie') ||
+            Object.getOwnPropertyDescriptor(document, 'cookie'),
+        globals: new Map(),
     };
 
-    const origSetItem = localStorage.setItem.bind(localStorage);
-    localStorage.setItem = function(key: string, value: string): void {
-        if (isTracerKey(key)) {
-            logger.debug(`🧹 Блокирована запись: ${key}=${value}`);
-            return;
-        }
-        origSetItem(key, value);
-    };
+    patchXHR();
+    patchFetch();
+    patchBeacon();
+    patchLocalStorage();
+    patchCookies();
+    patchConsole();
+    killGlobals();
+    purgeExisting();
 
-    const origRemoveItem = localStorage.removeItem.bind(localStorage);
-    localStorage.removeItem = function(key: string): void {
-        if (isTracerKey(key)) {
-            logger.debug(`🧹 Блокировано удаление: ${key}`);
-            return;
-        }
-        origRemoveItem(key);
-    };
-
-    // ===== 3. ПЕРЕХВАТ cookies =====
-    const origCookieGetter = Object.getOwnPropertyDescriptor(document, 'cookie')?.get;
-    const origCookieSetter = Object.getOwnPropertyDescriptor(document, 'cookie')?.set;
-
-    if (origCookieGetter && origCookieSetter) {
-        Object.defineProperty(document, 'cookie', {
-            get: function() {
-                const cookies = origCookieGetter.call(document);
-                if (typeof cookies === 'string') {
-                    const filtered = cookies
-                        .split(';')
-                        .filter(c => {
-                            const name = c.trim().split('=')[0] || '';
-                            return !isTracerKey(name);
-                        })
-                        .join(';');
-                    return filtered;
-                }
-                return cookies;
-            },
-            set: function(value: string) {
-                const name = value.split('=')[0] || '';
-                if (isTracerKey(name)) {
-                    logger.debug(`🧹 Блокирована установка cookie: ${name}`);
-                    return;
-                }
-                origCookieSetter.call(document, value);
-            },
-            configurable: true
-        });
-    }
-
-    // ===== 4. ПЕРЕХВАТ FETCH =====
-    const origFetch = window.fetch;
-    window.fetch = function(input: RequestInfo | URL, init?: RequestInit) {
-        const url = typeof input === 'string' ? input :
-                   input instanceof URL ? input.href :
-                   (input as any).url || '';
-        if (isAppTracer(url)) {
-            logFake('FETCH', url, init?.body);
-        }
-        return origFetch.call(this, input, init);
-    };
-
-    // ===== 5. ПЕРЕХВАТ BEACON =====
-    const origSendBeacon = navigator.sendBeacon;
-    navigator.sendBeacon = function(url: string | URL, data?: any) {
-        const urlStr = typeof url === 'string' ? url : url.href;
-        if (isAppTracer(urlStr)) {
-            logFake('BEACON', urlStr, data);
-        }
-        return origSendBeacon.call(this, url, data);
-    };
-
-    // ===== 6. ПЕРЕХВАТ ГЛОБАЛЬНЫХ ОБЪЕКТОВ =====
-    const killList = [
-        'TracerSDK2', 'tracerMain', 'instance',
-        'Tracer', 'tracer', 'at', 'ot', 'ct',
-        'mn', 'pte', 'Rte', 'vte', 'cne',
-        'Pre', 'vme', 'Wz'
-    ];
-
-    for (const name of killList) {
-        try {
-            if (typeof (window as any)[name] !== 'undefined') {
-                const orig = (window as any)[name];
-                (window as any)[name] = function(...args: any[]) {
-                    logger.debug(`🧹 Перехвачен вызов: ${name}`);
-                    if (typeof orig === 'function') {
-                        try {
-                            const instance = new (orig as any)(...args);
-                            if (instance) {
-                                Object.defineProperty(instance, 'deviceId', { 
-                                    value: fakeDeviceId, 
-                                    writable: false,
-                                    configurable: false 
-                                });
-                                Object.defineProperty(instance, 'sessionId', { 
-                                    value: fakeSessionId, 
-                                    writable: false,
-                                    configurable: false 
-                                });
-                                Object.defineProperty(instance, 'userId', { 
-                                    value: fakeUserId, 
-                                    writable: false,
-                                    configurable: false 
-                                });
-                            }
-                            return instance;
-                        } catch {
-                            return { 
-                                deviceId: fakeDeviceId,
-                                sessionId: fakeSessionId,
-                                userId: fakeUserId
-                            };
-                        }
-                    }
-                    return orig;
-                };
-                if (orig && typeof orig === 'function') {
-                    Object.assign((window as any)[name], orig);
-                }
-            }
-        } catch {}
-    }
-
-    // ===== 7. ПОДАВЛЯЕМ ОШИБКИ =====
-    const origConsoleError = console.error;
-    console.error = function(...args: any[]) {
-        const str = args.map(String).join(' ');
-        if (str.includes('tracer') || str.includes('apptracer') || 
-            str.includes('Socket disconnected') || str.includes('setRequestHeader') ||
-            str.includes('XMLHttpRequest') || str.includes('state must be OPENED') ||
-            str.includes('responseType') || str.includes('synchronous')) {
-            return;
-        }
-        origConsoleError.apply(console, args);
-    };
-
-    // ===== 8. ОЧИЩАЕМ СУЩЕСТВУЮЩИЕ ДАННЫЕ =====
-    // ← ИСПРАВЛЕНО: НЕ ТРОГАЕМ KMOD-КЛЮЧИ
-    for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (key && isTracerKey(key)) {
-            // Дополнительная защита от удаления kmod-ключей
-            if (key.startsWith('kmod_')) continue;
-            if (key.startsWith('kmod-')) continue;
-            
-            localStorage.removeItem(key);
-            logger.debug(`🧹 Удалён localStorage: ${key}`);
-        }
-    }
-
-    // ← ИСПРАВЛЕНО: НЕ ТРОГАЕМ KMOD-КУКИ
-    const cookies = document.cookie.split(';');
-    for (const cookie of cookies) {
-        const name = cookie.trim().split('=')[0] || '';
-        if (isTracerKey(name)) {
-            // Дополнительная защита от удаления kmod-кук
-            if (name.startsWith('kmod_')) continue;
-            if (name.startsWith('kmod-')) continue;
-            
-            document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;`;
-            logger.debug(`🧹 Удалён cookie: ${name}`);
-        }
-    }
-
-    logger.info('✅ ПОДМЕНА ID ВКЛЮЧЕНА');
-    logger.info('🔒 Все ID трекера заменены на фейковые');
+    logger.info('🔥 Analytics blocked (IDs replaced)');
 }
 
 export function disable(): void {
+    if (!isBlocking) return;
     isBlocking = false;
-    logger.info('✅ Подмена ID отключена (обнови страницу)');
+
+    if (originals) {
+        XMLHttpRequest.prototype.open = originals.xhrOpen;
+        XMLHttpRequest.prototype.send = originals.xhrSend;
+        XMLHttpRequest.prototype.setRequestHeader = originals.xhrSetHeader;
+
+        window.fetch = originals.fetch;
+        navigator.sendBeacon = originals.beacon;
+
+        Storage.prototype.getItem = originals.getItem;
+        Storage.prototype.setItem = originals.setItem;
+        Storage.prototype.removeItem = originals.removeItem;
+
+        if (originals.cookieDescriptor) {
+            Object.defineProperty(document, 'cookie', originals.cookieDescriptor);
+        }
+
+        restoreConsole();
+        restoreGlobals();
+
+        originals = null;
+    }
+
+    requestCounter = 0;
+    logger.info('✅ Analytics block disabled (refresh recommended)');
 }
 
 export function toggle(): boolean {
-    const current = storage.getBoolean('blockAnalytics');
-    const newState = !current;
+    const newState = !storage.getBoolean('blockAnalytics');
     storage.setBoolean('blockAnalytics', newState);
-
-    if (newState) {
-        enable();
-    } else {
-        disable();
-    }
-
+    if (newState) enable();
+    else disable();
     return newState;
 }
 

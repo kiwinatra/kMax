@@ -1,110 +1,165 @@
 /*
 * @author: potemk.in
-* @brief: Logger utility for consistent console logging with color-coded levels and performance tracking.
-* @desc: This file provides a logging system with support for debug, info, warn, and error levels, color-coded output, enable/disable toggling, group logging, table output, error stack logging, and performance timing for both synchronous and asynchronous operations.
+* @brief: Lightweight logger with level filtering and zero-cost disabled paths.
+* @desc: debug/info are silent unless `kmod_debug` storage flag is true or
+*       logView is active. warn/error always print. No `%c` styles are built
+*       when the level is off — the check happens before any string work.
+*       The logView feature does NOT need to know about this; it intercepts
+*       console directly.
 */
 
-type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+import { storage } from './storage';
+
+// ============================================================
+// TYPES
+// ============================================================
+
+export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+
+// ============================================================
+// CONSTANTS
+// ============================================================
 
 const PREFIX = '[KMOD]';
 
-const COLORS = {
+const COLORS: Record<LogLevel, string> = {
     debug: '#888',
     info: '#4ade80',
     warn: '#fbbf24',
     error: '#f87171',
 };
 
-let isEnabled = true;
+const DEBUG_FLAG_KEY = 'kmod_debug';
+
+// ============================================================
+// STATE
+// ============================================================
+
+let enabled = true;
+let verboseCached: boolean | null = null;
+let verboseCachedAt = 0;
+
+const VERBOSE_CACHE_TTL = 1000; // ms
+
+// ============================================================
+// VERBOSE FLAG
+// ============================================================
+
+/**
+ * Whether debug/info should actually print.
+ * Cached for 1s to avoid hammering storage during log bursts.
+ */
+function isVerbose(): boolean {
+    const now = Date.now();
+    if (verboseCached !== null && now - verboseCachedAt < VERBOSE_CACHE_TTL) {
+        return verboseCached;
+    }
+
+    let value = false;
+    try {
+        if (localStorage.getItem(DEBUG_FLAG_KEY) === 'true') {
+            value = true;
+        } else {
+            value = storage.getBoolean('logView');
+        }
+    } catch {
+        value = false;
+    }
+
+    verboseCached = value;
+    verboseCachedAt = now;
+    return value;
+}
+
+/** Force a re-read of the verbose flag on the next log call. */
+export function refreshLogger(): void {
+    verboseCached = null;
+}
+
+// ============================================================
+// LOGGER
+// ============================================================
 
 export const logger = {
-    // Function for enabling or disabling logging
-    setEnabled(enabled: boolean): void {
-        isEnabled = enabled;
+    setEnabled(value: boolean): void {
+        enabled = value;
     },
 
-    // Function for logging debug messages
     debug(...args: unknown[]): void {
-        if (!isEnabled) return;
-        this.log('debug', ...args);
+        if (!enabled || !isVerbose()) return;
+        console.log(`%c${PREFIX}`, `color:${COLORS.debug};font-weight:bold`, ...args);
     },
 
-    // Function for logging info messages
     info(...args: unknown[]): void {
-        if (!isEnabled) return;
-        this.log('info', ...args);
+        if (!enabled || !isVerbose()) return;
+        console.log(`%c${PREFIX}`, `color:${COLORS.info};font-weight:bold`, ...args);
     },
 
-    // Function for logging warning messages
     warn(...args: unknown[]): void {
-        if (!isEnabled) return;
-        this.log('warn', ...args);
+        if (!enabled) return;
+        console.warn(`%c${PREFIX}`, `color:${COLORS.warn};font-weight:bold`, ...args);
     },
 
-    // Function for logging error messages
     error(...args: unknown[]): void {
-        if (!isEnabled) return;
-        this.log('error', ...args);
+        if (!enabled) return;
+        console.error(`%c${PREFIX}`, `color:${COLORS.error};font-weight:bold`, ...args);
     },
 
-    // Function for logging with a specific level
+    /** Explicit-level log — same filtering rules as above. */
     log(level: LogLevel, ...args: unknown[]): void {
-        if (!isEnabled) return;
-        const color = COLORS[level];
-        console.log(`%c${PREFIX}`, `color: ${color}; font-weight: bold;`, ...args);
+        if (!enabled) return;
+        if ((level === 'debug' || level === 'info') && !isVerbose()) return;
+        const method = level === 'error' ? console.error : level === 'warn' ? console.warn : console.log;
+        method.call(console, `%c${PREFIX}`, `color:${COLORS[level]};font-weight:bold`, ...args);
     },
 
-    // Function for grouping log messages
     group(label: string): void {
-        if (!isEnabled) return;
+        if (!enabled || !isVerbose()) return;
         console.group(`${PREFIX} ${label}`);
     },
 
-    // Function for ending a log group
     groupEnd(): void {
-        if (!isEnabled) return;
+        if (!enabled || !isVerbose()) return;
         console.groupEnd();
     },
 
-    // Function for logging data in table format
     table(data: unknown): void {
-        if (!isEnabled) return;
+        if (!enabled || !isVerbose()) return;
         console.table(data);
     },
 
-    // Function for logging errors with stack trace
     errorWithStack(error: Error, context?: string): void {
-        if (!isEnabled) return;
+        if (!enabled) return;
         console.error(`${PREFIX} ${context || 'Error'}:`, error);
         if (error.stack) {
             console.debug(`${PREFIX} Stack:`, error.stack);
         }
     },
 
-    // Function for measuring synchronous execution time
     time(label: string, fn: () => void): void {
-        if (!isEnabled) {
+        if (!enabled || !isVerbose()) {
             fn();
             return;
         }
-        console.time(`${PREFIX} ${label}`);
+        const tag = `${PREFIX} ${label}`;
+        console.time(tag);
         try {
             fn();
         } finally {
-            console.timeEnd(`${PREFIX} ${label}`);
+            console.timeEnd(tag);
         }
     },
 
-    // Function for measuring asynchronous execution time
     async timeAsync<T>(label: string, fn: () => Promise<T>): Promise<T> {
-        if (!isEnabled) {
+        if (!enabled || !isVerbose()) {
             return fn();
         }
-        console.time(`${PREFIX} ${label}`);
+        const tag = `${PREFIX} ${label}`;
+        console.time(tag);
         try {
             return await fn();
         } finally {
-            console.timeEnd(`${PREFIX} ${label}`);
+            console.timeEnd(tag);
         }
     },
 };

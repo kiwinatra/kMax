@@ -1,8 +1,12 @@
 /*
 * @author: potemk.in
-* @brief: TypeScript type definitions for application configuration, settings, locales, and utility functions.
-* @desc: This file defines all the core types and interfaces used across the application, including configuration, settings, locale strings, UI options, observer options, storage keys, feature definitions, DOM utilities, logger levels, and helper types. It also provides type guard functions for locale and storage keys.
+* @brief: Central type definitions for the app: Config, Settings, Locale, StorageKey, features, and utility types.
+* @desc: Single source of truth for all shared types. Locale now includes every key actually used in ru.ts / en.ts (chats, templates, fontFamily, logView). StorageKey matches the real set used by the storage layer. Type guards are cheap and cache-free.
 */
+
+// ============================================================
+// CONFIG & SETTINGS
+// ============================================================
 
 export interface Config {
     name: string;
@@ -10,6 +14,7 @@ export interface Config {
     author: string;
     site: string;
 }
+
 export interface Settings {
     hideStories: boolean;
     hideSferum: boolean;
@@ -24,10 +29,16 @@ export interface Settings {
     fontFamily: string;
 }
 
+// ============================================================
+// LOCALE
+// ============================================================
+
 export interface Locale {
+    // Headers
     settingsTitle: string;
     settingsSubtitle: string;
-    
+
+    // Sections (sidebar)
     sectionGeneral: string;
     sectionSecurity: string;
     sectionAppearance: string;
@@ -35,7 +46,9 @@ export interface Locale {
     sectionOther: string;
     sectionLanguage: string;
     sectionAbout: string;
-    
+    sectionChats: string;
+
+    // Section descriptions
     sectionGeneralDesc: string;
     sectionSecurityDesc: string;
     sectionAppearanceDesc: string;
@@ -43,55 +56,162 @@ export interface Locale {
     sectionOtherDesc: string;
     sectionLanguageDesc: string;
     sectionAboutDesc: string;
-    
+    sectionChatsDesc: string;
+
+    // Feature labels + descriptions
     hideStoriesLabel: string;
     hideStoriesDesc: string;
     hideSferumLabel: string;
     hideSferumDesc: string;
-    
+
     blockAnalyticsLabel: string;
     blockAnalyticsDesc: string;
     hidePhoneLabel: string;
     hidePhoneDesc: string;
-    
+
     showCrownLabel: string;
     showCrownDesc: string;
     replaceTitleLabel: string;
     replaceTitleDesc: string;
-    
+
+    fontFamilyLabel: string;
+    fontFamilyDesc: string;
+
     showMetadataLabel: string;
     showMetadataDesc: string;
-    
+
     replaceMaxLabel: string;
     replaceMaxDesc: string;
     logViewLabel: string;
     logViewDesc: string;
-    
+
+    chatTagsLabel: string;
+    chatTagsDesc: string;
+    templatesLabel: string;
+    templatesDesc: string;
+
+    // Language
     languageLabel: string;
     languageRu: string;
     languageEn: string;
-    
+
+    // About
     aboutName: string;
     aboutVersion: string;
     aboutAuthor: string;
     aboutDescription: string;
-    
+
+    // Buttons
     saveButton: string;
     resetButton: string;
     resetConfirm: string;
     closeButton: string;
-    
+
+    // Statuses
     statusActive: string;
     statusEnabled: string;
     statusDisabled: string;
-    
+
+    // Toggles / navigation
     toggleOn: string;
     toggleOff: string;
     backToSettings: string;
+
+    // Font family labels (system)
+    fontFamilySystemUI: string;
+    fontFamilyArial: string;
+    fontFamilyArialBlack: string;
+    fontFamilyGeorgia: string;
+    fontFamilyTimesNewRoman: string;
+    fontFamilyCourierNew: string;
+    fontFamilyVerdana: string;
+    fontFamilyTahoma: string;
+    fontFamilyTrebuchetMS: string;
+    fontFamilyImpact: string;
+    fontFamilyComicSansMS: string;
+    fontFamilyLucidaSans: string;
+    fontFamilyGeneva: string;
+    fontFamilyPalatino: string;
+    fontFamilyBookman: string;
+    fontFamilyGaramond: string;
+    fontFamilyHelvetica: string;
+    fontFamilyFranklinGothic: string;
+    fontFamilyCenturyGothic: string;
+    fontFamilyCopperplate: string;
+    fontFamilyBaskerville: string;
+
+    // Font family labels (Google)
+    fontFamilyInter: string;
+    fontFamilyRoboto: string;
+    fontFamilyOpenSans: string;
+    fontFamilyMontserrat: string;
+    fontFamilyOswald: string;
+    fontFamilyRaleway: string;
+    fontFamilyLato: string;
+    fontFamilyPlayfairDisplay: string;
+    fontFamilyMerriweather: string;
+    fontFamilyUbuntu: string;
+    fontFamilyNunito: string;
+    fontFamilyPoppins: string;
+    fontFamilyQuicksand: string;
+    fontFamilyFiraSans: string;
+    fontFamilySourceSansPro: string;
+    fontFamilyPTSans: string;
+    fontFamilyIBMPlexSans: string;
+    fontFamilyManrope: string;
+    fontFamilyJetBrainsMono: string;
+    fontFamilyCaveat: string;
+    fontFamilyMarckScript: string;
 }
 
 export type LocaleKey = keyof Locale;
 export type LocaleMap = Record<string, Locale>;
+
+// ============================================================
+// STORAGE
+// ============================================================
+
+export type StorageKey =
+    | 'hideStories'
+    | 'hideSferum'
+    | 'replaceTitle'
+    | 'hidePhone'
+    | 'blockAnalytics'
+    | 'showCrown'
+    | 'showMetadata'
+    | 'replaceMax'
+    | 'language'
+    | 'logView'
+    | 'fontFamily'
+    | 'chatTags'
+    | 'templates';
+
+// ============================================================
+// FEATURES
+// ============================================================
+
+export type FeatureSection =
+    | 'general'
+    | 'security'
+    | 'appearance'
+    | 'media'
+    | 'other'
+    | 'chats';
+
+export interface Feature {
+    key: string;
+    default: boolean;
+    label: string;
+    section: FeatureSection;
+    apply: () => void;
+    restore?: () => void;
+}
+
+export type FeatureMap = Record<string, Feature>;
+
+// ============================================================
+// UI
+// ============================================================
 
 export interface ButtonOptions {
     text: string;
@@ -114,44 +234,6 @@ export interface ModalOptions {
     closeOnEscape?: boolean;
 }
 
-export type ObserverCallback = () => void;
-
-export interface ObserverOptions {
-    childList?: boolean;
-    subtree?: boolean;
-    characterData?: boolean;
-    attributes?: boolean;
-    attributeFilter?: string[];
-}
-
-export type StorageKey = 
-    | 'hideStories' 
-    | 'hideSferum' 
-    | 'replaceTitle' 
-    | 'hidePhone' 
-    | 'blockAnalytics' 
-    | 'showCrown' 
-    | 'showMetadata' 
-    | 'replaceMax' 
-    | 'language'
-    | 'logView'
-    | 'fontFamily'
-    | 'chatTags'
-    | 'templates';
-
-export type FeatureSection = 'general' | 'security' | 'appearance' | 'media' | 'other';
-
-export interface Feature {
-    key: string;
-    default: boolean;
-    label: string;
-    section: FeatureSection;
-    apply: () => void;
-    restore?: () => void;
-}
-
-export type FeatureMap = Record<string, Feature>;
-
 export interface ElementOptions {
     className?: string;
     id?: string;
@@ -168,6 +250,24 @@ export interface WaitOptions {
     interval?: number;
     throwOnTimeout?: boolean;
 }
+
+// ============================================================
+// OBSERVER
+// ============================================================
+
+export type ObserverCallback = () => void;
+
+export interface ObserverOptions {
+    childList?: boolean;
+    subtree?: boolean;
+    characterData?: boolean;
+    attributes?: boolean;
+    attributeFilter?: string[];
+}
+
+// ============================================================
+// UTILITIES
+// ============================================================
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
@@ -186,72 +286,143 @@ export type ReadonlyDeep<T> = {
 export type ValueOf<T> = T[keyof T];
 export type KeyOf<T> = keyof T;
 
-// Function for checking if a string is a valid locale key
-export function isLocaleKey(key: string): key is LocaleKey {
-    const sampleLocale: Locale = {
-        settingsTitle: '',
-        settingsSubtitle: '',
-        sectionGeneral: '',
-        sectionSecurity: '',
-        sectionAppearance: '',
-        sectionMedia: '',
-        sectionOther: '',
-        sectionLanguage: '',
-        sectionAbout: '',
-        sectionGeneralDesc: '',
-        sectionSecurityDesc: '',
-        sectionAppearanceDesc: '',
-        sectionMediaDesc: '',
-        sectionOtherDesc: '',
-        sectionLanguageDesc: '',
-        sectionAboutDesc: '',
-        hideStoriesLabel: '',
-        hideStoriesDesc: '',
-        hideSferumLabel: '',
-        hideSferumDesc: '',
-        blockAnalyticsLabel: '',
-        blockAnalyticsDesc: '',
-        hidePhoneLabel: '',
-        hidePhoneDesc: '',
-        showCrownLabel: '',
-        showCrownDesc: '',
-        replaceTitleLabel: '',
-        replaceTitleDesc: '',
-        showMetadataLabel: '',
-        showMetadataDesc: '',
-        replaceMaxLabel: '',
-        replaceMaxDesc: '',
-        logViewLabel: '',
-        logViewDesc: '',
-        languageLabel: '',
-        languageRu: '',
-        languageEn: '',
-        aboutName: '',
-        aboutVersion: '',
-        aboutAuthor: '',
-        aboutDescription: '',
-        saveButton: '',
-        resetButton: '',
-        resetConfirm: '',
-        closeButton: '',
-        statusActive: '',
-        statusEnabled: '',
-        statusDisabled: '',
-        toggleOn: '',
-        toggleOff: '',
-        backToSettings: '',
-    };
-    return key in sampleLocale;
+// ============================================================
+// TYPE GUARDS
+// ============================================================
+
+const STORAGE_KEY_SET: Set<string> = new Set([
+    'hideStories',
+    'hideSferum',
+    'replaceTitle',
+    'hidePhone',
+    'blockAnalytics',
+    'showCrown',
+    'showMetadata',
+    'replaceMax',
+    'language',
+    'logView',
+    'fontFamily',
+    'chatTags',
+    'templates',
+]);
+
+/** Cheap runtime check for StorageKey — no sample object allocation. */
+export function isStorageKey(key: string): key is StorageKey {
+    return STORAGE_KEY_SET.has(key);
 }
 
-// Function for checking if a string is a valid storage key
-export function isStorageKey(key: string): key is StorageKey {
-    const storageKeys: StorageKey[] = [
-        'hideStories', 'hideSferum', 'replaceTitle', 'hidePhone',
-        'blockAnalytics', 'showCrown', 'showMetadata', 'replaceMax',
-        'language', 'logView'
-    ];
-    return storageKeys.includes(key as StorageKey);
+/**
+ * Runtime check for LocaleKey.
+ * A cached sample object is used once at module load, then reused.
+ */
+const LOCALE_SAMPLE: Locale = {
+    settingsTitle: '',
+    settingsSubtitle: '',
+    sectionGeneral: '',
+    sectionSecurity: '',
+    sectionAppearance: '',
+    sectionMedia: '',
+    sectionOther: '',
+    sectionLanguage: '',
+    sectionAbout: '',
+    sectionChats: '',
+    sectionGeneralDesc: '',
+    sectionSecurityDesc: '',
+    sectionAppearanceDesc: '',
+    sectionMediaDesc: '',
+    sectionOtherDesc: '',
+    sectionLanguageDesc: '',
+    sectionAboutDesc: '',
+    sectionChatsDesc: '',
+    hideStoriesLabel: '',
+    hideStoriesDesc: '',
+    hideSferumLabel: '',
+    hideSferumDesc: '',
+    blockAnalyticsLabel: '',
+    blockAnalyticsDesc: '',
+    hidePhoneLabel: '',
+    hidePhoneDesc: '',
+    showCrownLabel: '',
+    showCrownDesc: '',
+    replaceTitleLabel: '',
+    replaceTitleDesc: '',
+    fontFamilyLabel: '',
+    fontFamilyDesc: '',
+    showMetadataLabel: '',
+    showMetadataDesc: '',
+    replaceMaxLabel: '',
+    replaceMaxDesc: '',
+    logViewLabel: '',
+    logViewDesc: '',
+    chatTagsLabel: '',
+    chatTagsDesc: '',
+    templatesLabel: '',
+    templatesDesc: '',
+    languageLabel: '',
+    languageRu: '',
+    languageEn: '',
+    aboutName: '',
+    aboutVersion: '',
+    aboutAuthor: '',
+    aboutDescription: '',
+    saveButton: '',
+    resetButton: '',
+    resetConfirm: '',
+    closeButton: '',
+    statusActive: '',
+    statusEnabled: '',
+    statusDisabled: '',
+    toggleOn: '',
+    toggleOff: '',
+    backToSettings: '',
+    fontFamilySystemUI: '',
+    fontFamilyArial: '',
+    fontFamilyArialBlack: '',
+    fontFamilyGeorgia: '',
+    fontFamilyTimesNewRoman: '',
+    fontFamilyCourierNew: '',
+    fontFamilyVerdana: '',
+    fontFamilyTahoma: '',
+    fontFamilyTrebuchetMS: '',
+    fontFamilyImpact: '',
+    fontFamilyComicSansMS: '',
+    fontFamilyLucidaSans: '',
+    fontFamilyGeneva: '',
+    fontFamilyPalatino: '',
+    fontFamilyBookman: '',
+    fontFamilyGaramond: '',
+    fontFamilyHelvetica: '',
+    fontFamilyFranklinGothic: '',
+    fontFamilyCenturyGothic: '',
+    fontFamilyCopperplate: '',
+    fontFamilyBaskerville: '',
+    fontFamilyInter: '',
+    fontFamilyRoboto: '',
+    fontFamilyOpenSans: '',
+    fontFamilyMontserrat: '',
+    fontFamilyOswald: '',
+    fontFamilyRaleway: '',
+    fontFamilyLato: '',
+    fontFamilyPlayfairDisplay: '',
+    fontFamilyMerriweather: '',
+    fontFamilyUbuntu: '',
+    fontFamilyNunito: '',
+    fontFamilyPoppins: '',
+    fontFamilyQuicksand: '',
+    fontFamilyFiraSans: '',
+    fontFamilySourceSansPro: '',
+    fontFamilyPTSans: '',
+    fontFamilyIBMPlexSans: '',
+    fontFamilyManrope: '',
+    fontFamilyJetBrainsMono: '',
+    fontFamilyCaveat: '',
+    fontFamilyMarckScript: '',
+};
+
+const LOCALE_KEY_SET: Set<string> = new Set(Object.keys(LOCALE_SAMPLE));
+
+export function isLocaleKey(key: string): key is LocaleKey {
+    return LOCALE_KEY_SET.has(key);
 }
 
 export default {

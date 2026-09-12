@@ -1,18 +1,30 @@
-// src/features/hideSferum/index.ts
+/*
+* @author: potemk.in
+* @brief: Hides the "Sign in to Sferum" button in the sidebar.
+* @desc: Uses display:none instead of node removal — fully idempotent and reversible without storing DOM positions. Registry triggers apply() when `.item` nodes appear. No local observer, no timers, no hidden-button map.
+*/
 
 import { logger } from '../../core/logger';
 import { storage } from '../../core/storage';
-import { watchDOM } from '../../core/observer';
 import { qsa } from '../../core/dom';
 
-const DEBOUNCE_DELAY = 300;
+// ============================================================
+// CONSTANTS
+// ============================================================
+
 const SFERUM_BUTTON_SELECTOR = '.item.svelte-6bkz6t';
+const SFERUM_FALLBACK_SELECTOR = '.item';
 const SFERUM_TEXT = 'Войти в Cферум';
 
+// ============================================================
+// STATE
+// ============================================================
+
 let isEnabled = false;
-let unwatch: (() => void) | null = null;
-let debounceTimer: number | null = null;
-let hiddenButtons: Map<Element, { parent: Node; nextSibling: Node | null }> = new Map();
+
+// ============================================================
+// DETECTION
+// ============================================================
 
 function isSferumButton(el: Element): boolean {
     const text = el.textContent?.trim() || '';
@@ -27,153 +39,81 @@ function isSferumButton(el: Element): boolean {
     return false;
 }
 
-function findSferumButtons(): Element[] {
-    // Ищем все элементы .item.svelte-6bkz6t
-    let buttons = qsa(SFERUM_BUTTON_SELECTOR);
-    
-    // Fallback: если не нашли, пробуем без хэша
-    if (buttons.length === 0) {
-        buttons = qsa('.item');
+function findSferumButtons(): HTMLElement[] {
+    let candidates = qsa<HTMLElement>(SFERUM_BUTTON_SELECTOR);
+    if (candidates.length === 0) {
+        candidates = qsa<HTMLElement>(SFERUM_FALLBACK_SELECTOR);
     }
-    
-    const result: Element[] = [];
-    for (const btn of buttons) {
-        if (isSferumButton(btn)) {
-            result.push(btn);
-        }
-    }
-    return result;
+    return candidates.filter(isSferumButton);
 }
 
-function saveButtonPosition(btn: Element): void {
-    if (!hiddenButtons.has(btn) && btn.parentNode) {
-        hiddenButtons.set(btn, {
-            parent: btn.parentNode,
-            nextSibling: btn.nextSibling,
-        });
-    }
-}
+// ============================================================
+// DOM PROCESSING
+// ============================================================
 
 function hideAll(): void {
     const buttons = findSferumButtons();
     let count = 0;
-
     for (const btn of buttons) {
-        saveButtonPosition(btn);
-        btn.remove();
-        count++;
+        if (btn.style.display !== 'none') {
+            btn.style.display = 'none';
+            count++;
+        }
     }
-
     if (count > 0) {
-        logger.debug(`🧹 Removed ${count} Sferum button(s)`);
+        logger.debug(`🧹 Hidden ${count} Sferum button(s)`);
     }
 }
 
-function restoreAll(): void {
+function showAll(): void {
+    const buttons = findSferumButtons();
     let count = 0;
-
-    for (const [btn, position] of hiddenButtons) {
-        try {
-            if (document.contains(btn)) continue;
-
-            if (position.nextSibling && position.nextSibling.parentNode) {
-                position.parent.insertBefore(btn, position.nextSibling);
-            } else {
-                position.parent.appendChild(btn);
-            }
+    for (const btn of buttons) {
+        if (btn.style.display === 'none') {
+            btn.style.display = '';
             count++;
-        } catch (error) {
-            logger.debug('Failed to restore Sferum button:', error);
         }
     }
-
-    hiddenButtons.clear();
-
     if (count > 0) {
         logger.debug(`♻️ Restored ${count} Sferum button(s)`);
     }
 }
 
-function processPage(): void {
-    const enabled = storage.getBoolean('hideSferum');
-    if (enabled) {
-        if (hiddenButtons.size > 0) {
-            hiddenButtons.clear();
-        }
+// ============================================================
+// PUBLIC API
+// ============================================================
+
+/** Idempotent — syncs visibility with current storage flag. */
+export function apply(): void {
+    if (storage.getBoolean('hideSferum')) {
         hideAll();
     } else {
-        restoreAll();
+        showAll();
     }
-}
-
-function debouncedProcess(): void {
-    if (debounceTimer) {
-        clearTimeout(debounceTimer);
-    }
-    debounceTimer = window.setTimeout(() => {
-        debounceTimer = null;
-        processPage();
-    }, DEBOUNCE_DELAY);
-}
-
-export function apply(): void {
-    processPage();
 }
 
 export function enable(): void {
     if (isEnabled) return;
     isEnabled = true;
-
     logger.info('🧹 Sferum button hide enabled');
-    processPage();
-
-    if (!unwatch) {
-        unwatch = watchDOM(() => {
-            debouncedProcess();
-        });
-    }
+    hideAll();
 }
 
 export function disable(): void {
     if (!isEnabled) return;
     isEnabled = false;
-
-    if (unwatch) {
-        unwatch();
-        unwatch = null;
-    }
-
-    if (debounceTimer) {
-        clearTimeout(debounceTimer);
-        debounceTimer = null;
-    }
-
-    restoreAll();
-
+    showAll();
     logger.info('🧹 Sferum button hide disabled');
 }
 
 export function toggle(): boolean {
-    const current = storage.getBoolean('hideSferum');
-    const newState = !current;
+    const newState = !storage.getBoolean('hideSferum');
     storage.setBoolean('hideSferum', newState);
-
-    if (newState) {
-        enable();
-    } else {
-        disable();
-    }
-
+    if (newState) enable();
+    else disable();
     return newState;
 }
 
-window.addEventListener('beforeunload', () => {
-    if (unwatch) {
-        unwatch();
-        unwatch = null;
-    }
-    if (debounceTimer) {
-        clearTimeout(debounceTimer);
-        debounceTimer = null;
-    }
-});
+export function isFeatureEnabled(): boolean {
+    return isEnabled;
+}

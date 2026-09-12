@@ -1,119 +1,79 @@
-// src/ui/versionBadge.ts
+/*
+* @author: potemk.in
+* @brief: Small version badge in the corner that opens the settings modal on click.
+* @desc: Intentionally minimal — no pulsing dots, no glow, no scale animations.
+*       Just a tiny dim label that becomes readable on hover. Clickable → settings.
+*/
 
-import { createElement } from '../core/dom';
 import { CONFIG } from '../config';
 import { openSettingsModal } from './settingsModal';
 import { logger } from '../core/logger';
 
 const BADGE_CLASS = 'kmod-version-badge';
-const ANIMATION_DURATION = 300;
+const STYLE_ID = 'kmod-version-badge-style';
 
-/**
- * Создаёт бейдж с версией мода в правом нижнем углу.
- * При клике открывает настройки.
- * Имеет анимацию появления и пульсацию.
- */
+// ============================================================
+// STYLES
+// ============================================================
+
+function ensureStyles(): void {
+    if (document.getElementById(STYLE_ID)) return;
+
+    const style = document.createElement('style');
+    style.id = STYLE_ID;
+    style.textContent = `
+.${BADGE_CLASS} {
+    position: fixed;
+    right: 10px;
+    bottom: 10px;
+    z-index: 99999;
+
+    padding: 2px 6px;
+    border-radius: 4px;
+
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 10px;
+    line-height: 1.4;
+    letter-spacing: 0.2px;
+
+    color: rgba(255, 255, 255, 0.35);
+    background: rgba(0, 0, 0, 0.35);
+
+    cursor: pointer;
+    user-select: none;
+    transition: color 0.15s ease, background 0.15s ease;
+}
+
+.${BADGE_CLASS}:hover {
+    color: rgba(255, 255, 255, 0.75);
+    background: rgba(0, 0, 0, 0.55);
+}
+`;
+    document.head.appendChild(style);
+}
+
+// ============================================================
+// PUBLIC API
+// ============================================================
+
 export function createVersionBadge(version: string = CONFIG.version): void {
-  // Удаляем старый, если есть
-  removeVersionBadge();
+    removeVersionBadge();
+    ensureStyles();
 
-  const badge = createElement('div', {
-    className: BADGE_CLASS,
-    styles: {
-      position: 'fixed',
-      bottom: '16px',
-      right: '16px',
-      background: 'rgba(0, 0, 0, 0.75)',
-      color: '#888',
-      padding: '6px 14px',
-      borderRadius: '20px',
-      fontSize: '12px',
-      fontFamily: 'monospace',
-      zIndex: '99999',
-      userSelect: 'none',
-      cursor: 'pointer',
-      backdropFilter: 'blur(4px)',
-      border: '1px solid rgba(255,255,255,0.05)',
-      transition: `all ${ANIMATION_DURATION}ms ease`,
-      boxShadow: '0 2px 12px rgba(0,0,0,0.4)',
-      letterSpacing: '0.3px',
-      display: 'flex',
-      alignItems: 'center',
-      gap: '6px',
-    },
-    events: {
-      click: () => {
+    const badge = document.createElement('div');
+    badge.className = BADGE_CLASS;
+    badge.textContent = `v${version}`;
+    badge.title = 'kMax Mod';
+
+    badge.addEventListener('click', () => {
         logger.debug('Version badge clicked, opening settings');
         openSettingsModal();
-      },
-      mouseenter: (e) => {
-        const target = e.currentTarget as HTMLElement;
-        target.style.background = 'rgba(30, 30, 40, 0.9)';
-        target.style.color = '#fff';
-        target.style.borderColor = 'rgba(255,215,0,0.3)';
-        target.style.transform = 'scale(1.05)';
-      },
-      mouseleave: (e) => {
-        const target = e.currentTarget as HTMLElement;
-        target.style.background = 'rgba(0, 0, 0, 0.75)';
-        target.style.color = '#888';
-        target.style.borderColor = 'rgba(255,255,255,0.05)';
-        target.style.transform = 'scale(1)';
-      },
-    },
-  });
+    });
 
-  // Точка-индикатор (цветная)
-  const dot = document.createElement('span');
-  dot.style.cssText = `
-    display: inline-block;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: #3ba55c;
-    animation: kmod-badge-pulse 2s ease-in-out infinite;
-  `;
-  badge.appendChild(dot);
-
-  // Текст
-  const text = document.createTextNode(`v${version}`);
-  badge.appendChild(text);
-
-  // Добавляем стили для анимации (если ещё нет)
-  if (!document.querySelector('#kmod-badge-styles')) {
-    const style = document.createElement('style');
-    style.id = 'kmod-badge-styles';
-    style.textContent = `
-      @keyframes kmod-badge-pulse {
-        0% { opacity: 0.6; transform: scale(1); }
-        50% { opacity: 1; transform: scale(1.2); }
-        100% { opacity: 0.6; transform: scale(1); }
-      }
-    `;
-    document.head.appendChild(style);
-  }
-
-  document.body.appendChild(badge);
+    document.body.appendChild(badge);
 }
 
-/**
- * Удаление бейджа версии
- */
 export function removeVersionBadge(): void {
-  const badge = document.querySelector(`.${BADGE_CLASS}`);
-  if (badge) badge.remove();
-}
-
-/**
- * Обновление текста бейджа (например, при смене версии)
- */
-export function updateVersionBadge(version: string): void {
-  const badge = document.querySelector(`.${BADGE_CLASS}`);
-  if (badge) {
-    // Обновляем текст, сохраняя точку
-    const textNode = badge.childNodes[1]; // предполагаем, что второй child - текст
-    if (textNode) textNode.textContent = `v${version}`;
-  } else {
-    createVersionBadge(version);
-  }
+    const badge = document.querySelector(`.${BADGE_CLASS}`);
+    if (badge) badge.remove();
 }

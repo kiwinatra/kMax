@@ -1,54 +1,48 @@
-// src/features/replaceTitle/index.ts
+/*
+* @author: potemk.in
+* @brief: Adds the "kMax | " prefix to the document title.
+* @desc: Uses a dedicated MutationObserver on <title> because the centralized
+*       observer only watches <body>. A change to document.title happens in
+*       <head>, so it would be missed otherwise. This is the single documented
+*       exception to the "one observer" rule — the target is a single, tiny
+*       node, and the cost is negligible. All other logic is pure/idempotent
+*       and callable from registry.apply() at any time.
+*/
 
 import { logger } from '../../core/logger';
 import { storage } from '../../core/storage';
 
 // ============================================================
-// КОНСТАНТЫ
+// CONSTANTS
 // ============================================================
 
 const PREFIX = 'kMax | ';
-const TITLE_STORAGE_KEY = 'replaceTitle';
+const FALLBACK_TITLE = 'max.ru';
+const DATASET_KEY = 'kmodOriginalTitle';
 
 // ============================================================
-// ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+// STATE
 // ============================================================
 
-/**
- * Получение оригинального заголовка (без префикса)
- */
-function getOriginalTitle(): string {
-    let current = document.title;
-    if (current.startsWith(PREFIX)) {
-        current = current.slice(PREFIX.length);
-    }
-    return current;
-}
+let titleObserver: MutationObserver | null = null;
+let applyDebounceTimer: number | null = null;
 
-/**
- * Сохранение оригинального заголовка в dataset (для надёжности)
- */
-function storeOriginalTitle(title: string): void {
-    document.documentElement.dataset.kmodOriginalTitle = title;
-}
+// ============================================================
+// ORIGINAL TITLE BOOKKEEPING
+// ============================================================
 
-/**
- * Получение сохранённого оригинального заголовка
- */
 function getStoredOriginalTitle(): string | null {
-    return document.documentElement.dataset.kmodOriginalTitle || null;
+    return document.documentElement.dataset[DATASET_KEY] || null;
 }
 
-/**
- * Проверка, есть ли уже префикс
- */
+function storeOriginalTitle(title: string): void {
+    document.documentElement.dataset[DATASET_KEY] = title;
+}
+
 function hasPrefix(): boolean {
     return document.title.startsWith(PREFIX);
 }
 
-/**
- * Безопасное обновление заголовка (с защитой от рекурсии)
- */
 function safeSetTitle(newTitle: string): void {
     if (document.title !== newTitle) {
         document.title = newTitle;
@@ -56,206 +50,141 @@ function safeSetTitle(newTitle: string): void {
 }
 
 // ============================================================
-// ОСНОВНАЯ ЛОГИКА
+// CORE APPLY / RESTORE
 // ============================================================
 
-/**
- * Применение заголовка с префиксом
- */
 function applyTitle(): void {
-    // Если уже есть префикс — пропускаем
-    if (hasPrefix()) {
-        return;
-    }
+    if (hasPrefix()) return;
 
-    // Получаем оригинальный заголовок
     let original = getStoredOriginalTitle();
     if (!original) {
-        original = getOriginalTitle();
+        original = document.title;
         storeOriginalTitle(original);
     }
 
-    // Если оригинал уже содержит префикс (защита от дублирования)
+    // Guard against duplicated prefixes from prior sessions
     if (original.startsWith(PREFIX)) {
         original = original.slice(PREFIX.length);
         storeOriginalTitle(original);
     }
 
-    const newTitle = `${PREFIX}${original}`;
-    safeSetTitle(newTitle);
-    logger.debug(`📝 Title applied: ${newTitle}`);
+    safeSetTitle(`${PREFIX}${original}`);
 }
 
-/**
- * Восстановление оригинального заголовка
- */
 function restoreTitle(): void {
-    // Если нет префикса — ничего не делаем
-    if (!hasPrefix()) {
-        return;
-    }
+    if (!hasPrefix()) return;
 
-    // Пытаемся получить сохранённый оригинал
     let original = getStoredOriginalTitle();
     if (!original) {
-        // Если не сохранили — пробуем вырезать префикс
         original = document.title.slice(PREFIX.length);
     }
-
-    // Защита от пустого заголовка
     if (!original) {
-        original = 'max.ru';
+        original = FALLBACK_TITLE;
     }
 
     safeSetTitle(original);
-    logger.debug(`📝 Title restored: ${original}`);
-}
-
-/**
- * Синхронизация состояния (проверяет storage и применяет/восстанавливает)
- */
-function syncTitle(): void {
-    const enabled = storage.getBoolean(TITLE_STORAGE_KEY);
-    
-    if (enabled) {
-        applyTitle();
-    } else {
-        restoreTitle();
-    }
 }
 
 // ============================================================
-// ПУБЛИЧНЫЙ API
+// TITLE OBSERVER (single-purpose, documented exception)
 // ============================================================
 
-/**
- * Применение текущего состояния (для registry)
- */
-export function apply(): void {
-    const enabled = storage.getBoolean(TITLE_STORAGE_KEY);
-    
-    if (enabled) {
-        applyTitle();
-    } else {
-        restoreTitle();
+function scheduleTitleSync(): void {
+    if (applyDebounceTimer !== null) {
+        clearTimeout(applyDebounceTimer);
     }
+    applyDebounceTimer = window.setTimeout(() => {
+        applyDebounceTimer = null;
+        if (!storage.getBoolean('replaceTitle')) return;
+        if (!hasPrefix()) applyTitle();
+    }, 50);
 }
 
-/**
- * Включение функции
- */
-export function enable(): void {
-    storage.setBoolean(TITLE_STORAGE_KEY, true);
-    applyTitle();
-    logger.info('📝 Title prefix enabled');
-}
+function startTitleObserver(): void {
+    if (titleObserver) return;
 
-/**
- * Отключение функции
- */
-export function disable(): void {
-    storage.setBoolean(TITLE_STORAGE_KEY, false);
-    restoreTitle();
-    logger.info('📝 Title prefix disabled');
-}
+    const titleEl = document.querySelector('head > title');
+    if (!titleEl) return;
 
-/**
- * Переключение состояния
- */
-export function toggle(): boolean {
-    const current = storage.getBoolean(TITLE_STORAGE_KEY);
-    const newState = !current;
-    storage.setBoolean(TITLE_STORAGE_KEY, newState);
-
-    if (newState) {
-        applyTitle();
-        logger.info('📝 Title prefix enabled (toggle)');
-    } else {
-        restoreTitle();
-        logger.info('📝 Title prefix disabled (toggle)');
-    }
-
-    return newState;
-}
-
-/**
- * Обновление заголовка при изменении (вызывается из MutationObserver)
- */
-export function updateOnTitleChange(): void {
-    // Если функция включена — применяем префикс
-    const enabled = storage.getBoolean(TITLE_STORAGE_KEY);
-    if (enabled && !hasPrefix()) {
-        applyTitle();
-    }
-}
-
-// ============================================================
-// АВТОМАТИЧЕСКОЕ ОБНОВЛЕНИЕ ПРИ ИЗМЕНЕНИИ ЗАГОЛОВКА
-// ============================================================
-
-let titleObserver: MutationObserver | null = null;
-let isObserving = false;
-
-/**
- * Запуск наблюдения за изменением заголовка
- */
-export function startTitleObserver(): void {
-    if (isObserving) return;
-
-    const target = document.querySelector('head title');
-    if (!target) return;
-
-    titleObserver = new MutationObserver(() => {
-        // Небольшая задержка, чтобы избежать конфликтов
-        setTimeout(() => {
-            updateOnTitleChange();
-        }, 50);
-    });
-
-    titleObserver.observe(target, {
+    titleObserver = new MutationObserver(scheduleTitleSync);
+    titleObserver.observe(titleEl, {
         childList: true,
         characterData: true,
         subtree: true,
     });
 
-    isObserving = true;
     logger.debug('📝 Title observer started');
 }
 
-/**
- * Остановка наблюдения за заголовком
- */
-export function stopTitleObserver(): void {
+function stopTitleObserver(): void {
     if (titleObserver) {
         titleObserver.disconnect();
         titleObserver = null;
-        isObserving = false;
-        logger.debug('📝 Title observer stopped');
+    }
+    if (applyDebounceTimer !== null) {
+        clearTimeout(applyDebounceTimer);
+        applyDebounceTimer = null;
     }
 }
 
 // ============================================================
-// ИНИЦИАЛИЗАЦИЯ
+// PUBLIC API
 // ============================================================
 
-// При загрузке запускаем наблюдатель
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
+/** Idempotent — syncs document title with the storage flag. */
+export function apply(): void {
+    if (storage.getBoolean('replaceTitle')) {
+        applyTitle();
         startTitleObserver();
-    });
-} else {
+    } else {
+        restoreTitle();
+        stopTitleObserver();
+    }
+}
+
+export function enable(): void {
+    applyTitle();
     startTitleObserver();
+    logger.info('📝 Title prefix enabled');
+}
+
+export function disable(): void {
+    restoreTitle();
+    stopTitleObserver();
+    logger.info('📝 Title prefix disabled');
+}
+
+export function toggle(): boolean {
+    const newState = !storage.getBoolean('replaceTitle');
+    storage.setBoolean('replaceTitle', newState);
+    if (newState) enable();
+    else disable();
+    return newState;
+}
+
+export function isFeatureEnabled(): boolean {
+    return titleObserver !== null;
 }
 
 // ============================================================
-// ОЧИСТКА ПРИ ВЫГРУЗКЕ
+// BOOTSTRAP + CLEANUP
 // ============================================================
 
-window.addEventListener('beforeunload', () => {
-    stopTitleObserver();
-});
+// Start observing as soon as <title> exists in the DOM.
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+        if (storage.getBoolean('replaceTitle')) startTitleObserver();
+    }, { once: true });
+} else if (storage.getBoolean('replaceTitle')) {
+    startTitleObserver();
+}
 
-// Экспортируем для совместимости
+if (typeof window !== 'undefined') {
+    window.addEventListener('beforeunload', () => {
+        stopTitleObserver();
+    });
+}
+
 export default {
     enable,
     disable,

@@ -1,34 +1,49 @@
 /*
 * @author: potemk.in
-* @brief: Main entry point for the application that handles initialization, feature application, DOM watching, and global error handling.
-* @desc: This file is the core bootstrap module that initializes the entire application. It manages feature registration, DOM mutation observation, locale initialization, global API exposure, error handling, and crash recovery. It also controls the loading screen lifecycle and provides safe mode functionality.
+* @brief: Application bootstrap — initialization, feature application, DOM watcher, global API, error handling.
+* @desc: Entry point that wires together the config, locales, storage, registry, UI, and the centralized DOM observer. Uses the new batch-based observer so features receive only the nodes that changed in the current frame, avoiding full-document rescans. Handles retry on init, global API exposure, crash screen, and cleanup.
 */
 
 import { CONFIG } from './config';
 import { locales, getLocale, initLocale } from './locales';
 import { logger } from './core/logger';
 import { storage } from './core/storage';
-import { watchDOM } from './core/observer';
-import { applyAllFeatures, applyFeature, isFeatureEnabled, toggleFeature } from './registry';
+import { watchDOM, ObserverBatch } from './core/observer';
+import {
+    applyAllFeatures,
+    applyFeature,
+    applyOnMutations,
+    isFeatureEnabled,
+    toggleFeature,
+} from './registry';
 import { createVersionBadge } from './ui/versionBadge';
 import { waitForSettingsAndCreateButtons } from './ui/buttons';
 import { openSettingsModal } from './ui/settingsModal';
-import { showLoader, hideLoader, showCrashScreen, isCrashScreenActive } from './ui/loader';
+import {
+    showLoader,
+    hideLoader,
+    showCrashScreen,
+    isCrashScreenActive,
+} from './ui/loader';
 import { FEATURES } from './registry';
-import { whenIdle, isTabVisible, onVisibilityChange } from './core/performance';
+import { whenIdle } from './core/performance';
 import { applyStoredFont } from './features/changeFont';
 import { dumpScripts } from './features/dumpScripts';
+
+// ============================================================
+// STATE
+// ============================================================
 
 let initialized = false;
 let initPromise: Promise<void> | null = null;
 let unwatchDom: (() => void) | null = null;
-let domWatchTimeout: number | null = null;
-let visibilityUnwatch: (() => void) | null = null;
 
-const DOM_WATCH_DEBOUNCE = 500;
 const MAX_INIT_ATTEMPTS = 3;
 
-// Function for checking if the current site is max.ru
+// ============================================================
+// HELPERS
+// ============================================================
+
 function isMaxSite(): boolean {
     try {
         return window.location.hostname.includes('max.ru');
@@ -37,7 +52,6 @@ function isMaxSite(): boolean {
     }
 }
 
-// Function for safely applying all features with error handling
 function safeApplyAllFeatures(): void {
     try {
         applyAllFeatures();
@@ -46,32 +60,22 @@ function safeApplyAllFeatures(): void {
     }
 }
 
-// Function for handling DOM changes and reapplying features
-function handleDomChanges(): void {
-    if (!isTabVisible()) return;
-    
-    if (domWatchTimeout) {
-        clearTimeout(domWatchTimeout);
+/**
+ * Called on every batched DOM mutation.
+ * The observer already batches by rAF, so no extra debounce needed.
+ */
+function handleMutations(batch: ObserverBatch): void {
+    try {
+        applyOnMutations(batch);
+    } catch (error) {
+        logger.error('Error in mutation handler:', error);
     }
-    domWatchTimeout = window.setTimeout(() => {
-        domWatchTimeout = null;
-        try {
-            for (const key of Object.keys(FEATURES)) {
-                try {
-                    if (isFeatureEnabled(key)) {
-                        applyFeature(key);
-                    }
-                } catch (error) {
-                    logger.error(`Failed to apply feature "${key}" on DOM change:`, error);
-                }
-            }
-        } catch (error) {
-            logger.error('Error in DOM change handler:', error);
-        }
-    }, DOM_WATCH_DEBOUNCE);
 }
 
-// Function for initializing the application with retry logic
+// ============================================================
+// INIT
+// ============================================================
+
 async function init(): Promise<void> {
     if (initialized) {
         logger.debug('Already initialized, skipping');
@@ -95,7 +99,7 @@ async function init(): Promise<void> {
             } catch (error) {
                 logger.error(`Init attempt ${attempts}/${MAX_INIT_ATTEMPTS} failed:`, error);
                 if (attempts >= MAX_INIT_ATTEMPTS) throw error;
-                await new Promise(resolve => setTimeout(resolve, 500 * attempts));
+                await new Promise((resolve) => setTimeout(resolve, 500 * attempts));
             }
         }
     })();
@@ -103,7 +107,6 @@ async function init(): Promise<void> {
     return initPromise;
 }
 
-// Function for performing the actual initialization logic
 async function doInit(): Promise<void> {
     if (!isMaxSite()) {
         logger.warn('Mod is not running on max.ru. Some features may not work.');
@@ -128,30 +131,25 @@ async function doInit(): Promise<void> {
         logger.error('Failed to create settings buttons:', error);
     }
 
+    // Single global observer — features subscribe to it via registry.
+    // Main only dispatches the batch to the registry.
     if (!unwatchDom) {
-        unwatchDom = watchDOM(() => {
-            handleDomChanges();
-        });
+        unwatchDom = watchDOM(handleMutations);
         logger.debug('DOM watcher started');
-    }
-
-    if (!visibilityUnwatch) {
-        visibilityUnwatch = onVisibilityChange((visible) => {
-            if (visible) {
-                handleDomChanges();
-            }
-        });
     }
 
     setupGlobalAPI();
     applyStoredFont();
-    
+
     hideLoader();
 
     logger.info('✅ Mod initialized');
 }
 
-// Function for exposing global API on window object
+// ============================================================
+// GLOBAL API
+// ============================================================
+
 function setupGlobalAPI(): void {
     if (typeof window === 'undefined') return;
     window.__kmax_dump_scripts = dumpScripts;
@@ -196,11 +194,17 @@ declare global {
     }
 }
 
+// ============================================================
+// BOOTSTRAP
+// ============================================================
+
 if (typeof window !== 'undefined') {
     showLoader();
 }
 
-const safeMode = typeof window !== 'undefined' && localStorage.getItem('kmod_safe_mode') === 'true';
+const safeMode =
+    typeof window !== 'undefined' &&
+    localStorage.getItem('kmod_safe_mode') === 'true';
 
 if (safeMode) {
     console.warn('[KMOD] 🛡️ Safe mode enabled — skipping initialization');
@@ -208,89 +212,90 @@ if (safeMode) {
         hideLoader();
         showCrashScreen({
             title: '🛡️ Безопасный режим',
-            message: 'Мод отключен в безопасном режиме. Чтобы включить снова — удалите kmod_safe_mode из localStorage.',
+            message:
+                'Мод отключен в безопасном режиме. Чтобы включить снова — удалите kmod_safe_mode из localStorage.',
         });
     }, 500);
 } else if (typeof window !== 'undefined') {
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', () => {
-            whenIdle(() => {
-                init().catch((error) => {
-                    hideLoader();
-                    showCrashScreen({
-                        title: '💥 Ошибка инициализации',
-                        message: 'Мод не смог загрузиться. Попробуйте перезагрузить страницу или отключить мод.',
-                        error,
-                        details: `Попытка инициализации на ${window.location.hostname}`,
-                    });
-                });
-            }, 1500);
-        });
-    } else {
+    const startInit = () => {
         whenIdle(() => {
             init().catch((error) => {
                 hideLoader();
                 showCrashScreen({
                     title: '💥 Ошибка инициализации',
-                    message: 'Мод не смог загрузиться. Попробуйте перезагрузить страницу или отключить мод.',
+                    message:
+                        'Мод не смог загрузиться. Попробуйте перезагрузить страницу или отключить мод.',
                     error,
                     details: `Попытка инициализации на ${window.location.hostname}`,
                 });
             });
         }, 1000);
+    };
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', startInit, { once: true });
+    } else {
+        startInit();
     }
 }
+
+// ============================================================
+// GLOBAL ERROR HANDLING
+// ============================================================
 
 if (typeof window !== 'undefined') {
     window.addEventListener('error', (event) => {
         const message = event.message || '';
         const filename = event.filename || '';
-        if (message.includes('kmod') || message.includes('kMax') || message.includes('KMOD') ||
-            filename.includes('kmod') || filename.includes('kMax')) {
-            if (!isCrashScreenActive()) {
-                hideLoader();
-                showCrashScreen({
-                    title: '💥 Критическая ошибка мода',
-                    message: 'В работе мода произошла непредвиденная ошибка.',
-                    error: event.error || event.message,
-                    details: `${event.filename}:${event.lineno}:${event.colno}`,
-                });
-            }
+        const isKmodError =
+            message.includes('kmod') ||
+            message.includes('kMax') ||
+            message.includes('KMOD') ||
+            filename.includes('kmod') ||
+            filename.includes('kMax');
+        if (isKmodError && !isCrashScreenActive()) {
+            hideLoader();
+            showCrashScreen({
+                title: '💥 Критическая ошибка мода',
+                message: 'В работе мода произошла непредвиденная ошибка.',
+                error: event.error || event.message,
+                details: `${event.filename}:${event.lineno}:${event.colno}`,
+            });
         }
     });
 
     window.addEventListener('unhandledrejection', (event) => {
         const reason = event.reason;
         const reasonStr = String(reason || '');
-        if (reason && typeof reason === 'object' && 
-            (reason.stack?.includes('kmod') || reason.stack?.includes('kMax') ||
-             reasonStr.includes('kmod') || reasonStr.includes('kMax'))) {
-            if (!isCrashScreenActive()) {
-                hideLoader();
-                showCrashScreen({
-                    title: '💥 Необработанная ошибка',
-                    message: 'В работе мода произошла непредвиденная ошибка.',
-                    error: reason,
-                });
-            }
+        const stack = reason && typeof reason === 'object' ? reason.stack || '' : '';
+        const isKmodRejection =
+            stack.includes('kmod') ||
+            stack.includes('kMax') ||
+            reasonStr.includes('kmod') ||
+            reasonStr.includes('kMax');
+        if (isKmodRejection && !isCrashScreenActive()) {
+            hideLoader();
+            showCrashScreen({
+                title: '💥 Необработанная ошибка',
+                message: 'В работе мода произошла непредвиденная ошибка.',
+                error: reason,
+            });
         }
     });
 }
 
-export { init, isMaxSite, handleDomChanges };
+// ============================================================
+// CLEANUP
+// ============================================================
 
-window.addEventListener('beforeunload', () => {
-    if (unwatchDom) {
-        unwatchDom();
-        unwatchDom = null;
-    }
-    if (domWatchTimeout) {
-        clearTimeout(domWatchTimeout);
-        domWatchTimeout = null;
-    }
-    if (visibilityUnwatch) {
-        visibilityUnwatch();
-        visibilityUnwatch = null;
-    }
-    logger.debug('Cleanup completed');
-});
+if (typeof window !== 'undefined') {
+    window.addEventListener('beforeunload', () => {
+        if (unwatchDom) {
+            unwatchDom();
+            unwatchDom = null;
+        }
+        logger.debug('Cleanup completed');
+    });
+}
+
+export { init, isMaxSite, handleMutations };

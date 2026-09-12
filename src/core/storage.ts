@@ -1,20 +1,23 @@
 /*
 * @author: potemk.in
-* @brief: LocalStorage wrapper for persistent settings with type safety and debug support.
-* @desc: This file provides a typed storage system for managing application settings in localStorage. It includes getters and setters for boolean and generic values, default values, reset functionality, key listing, and debug mode for tracking operations. All methods handle errors gracefully.
+* @brief: LocalStorage wrapper with in-memory cache for fast, synchronized access.
+* @desc: Provides typed access to localStorage with an in-memory cache layer to avoid repeated disk reads. Cache is invalidated on writes. Supports booleans, strings, objects, debug mode, and cross-feature settings (chatTags, templates, fontFamily).
 */
 
-type StorageKey = 
-    | 'hideStories' 
-    | 'hideSferum' 
-    | 'replaceTitle' 
-    | 'hidePhone' 
-    | 'blockAnalytics' 
-    | 'showCrown' 
-    | 'showMetadata' 
+export type StorageKey =
+    | 'hideStories'
+    | 'hideSferum'
+    | 'replaceTitle'
+    | 'hidePhone'
+    | 'blockAnalytics'
+    | 'showCrown'
+    | 'showMetadata'
     | 'replaceMax'
     | 'language'
-    | 'logView';
+    | 'logView'
+    | 'fontFamily'
+    | 'chatTags'
+    | 'templates';
 
 interface Settings {
     hideStories: boolean;
@@ -24,9 +27,9 @@ interface Settings {
     blockAnalytics: boolean;
     showCrown: boolean;
     showMetadata: boolean;
+    replaceMax: boolean;
     language: 'ru' | 'en';
     logView: boolean;
-    replaceMax: boolean;
 }
 
 const DEFAULTS: Settings = {
@@ -37,144 +40,223 @@ const DEFAULTS: Settings = {
     blockAnalytics: false,
     showCrown: false,
     showMetadata: false,
+    replaceMax: false,
     language: 'ru',
     logView: false,
-    replaceMax: false,
 };
 
 const PREFIX = 'kmod_';
 
+// ============================================================
+// IN-MEMORY CACHE
+// ============================================================
+
+const cache = new Map<StorageKey, unknown>();
 let debugMode = false;
 
+function logDebug(...args: unknown[]): void {
+    if (debugMode) console.log('[STORAGE]', ...args);
+}
+
+// ============================================================
+// LOW-LEVEL ACCESS
+// ============================================================
+
+function readRaw(key: StorageKey): string | null {
+    try {
+        return localStorage.getItem(PREFIX + key);
+    } catch {
+        return null;
+    }
+}
+
+// ============================================================
+// GENERIC GET / SET / REMOVE (with cache)
+// ============================================================
+
+function getValue<T = unknown>(key: StorageKey): T | null {
+    if (cache.has(key)) {
+        const v = cache.get(key);
+        return (v === undefined ? null : v) as T | null;
+    }
+    const raw = readRaw(key);
+    if (raw === null) {
+        cache.set(key, null);
+        return null;
+    }
+    try {
+        const parsed = JSON.parse(raw) as T;
+        cache.set(key, parsed);
+        return parsed;
+    } catch {
+        cache.set(key, null);
+        return null;
+    }
+}
+
+function setValue<T = unknown>(key: StorageKey, value: T): void {
+    cache.set(key, value);
+    try {
+        localStorage.setItem(PREFIX + key, JSON.stringify(value));
+        logDebug(`Saved ${PREFIX + key} =`, value);
+    } catch (error) {
+        console.error(`[STORAGE] Set error for "${key}":`, error);
+    }
+}
+
+function removeValue(key: StorageKey): void {
+    cache.delete(key);
+    try {
+        localStorage.removeItem(PREFIX + key);
+        logDebug(`Removed ${PREFIX + key}`);
+    } catch (error) {
+        console.error(`[STORAGE] Remove error for "${key}":`, error);
+    }
+}
+
+// ============================================================
+// BOOLEAN HELPERS (with cache)
+// ============================================================
+
+function getBooleanValue(key: StorageKey): boolean {
+    if (cache.has(key)) {
+        return Boolean(cache.get(key));
+    }
+    const raw = readRaw(key);
+    let value: boolean;
+    if (raw === null) {
+        value = Boolean(DEFAULTS[key as keyof Settings]);
+    } else {
+        try {
+            value = Boolean(JSON.parse(raw));
+        } catch {
+            value = raw === 'true';
+        }
+    }
+    cache.set(key, value);
+    return value;
+}
+
+function setBooleanValue(key: StorageKey, value: boolean): void {
+    setValue(key, value);
+}
+
+// ============================================================
+// AGGREGATE ACCESS
+// ============================================================
+
+function getAllSettings(): Settings {
+    return {
+        hideStories: getBooleanValue('hideStories'),
+        hideSferum: getBooleanValue('hideSferum'),
+        replaceTitle: getBooleanValue('replaceTitle'),
+        hidePhone: getBooleanValue('hidePhone'),
+        blockAnalytics: getBooleanValue('blockAnalytics'),
+        showCrown: getBooleanValue('showCrown'),
+        showMetadata: getBooleanValue('showMetadata'),
+        replaceMax: getBooleanValue('replaceMax'),
+        language: getValue<'ru' | 'en'>('language') || 'ru',
+        logView: getBooleanValue('logView'),
+    };
+}
+
+function getAllKeysList(): string[] {
+    const keys: string[] = [];
+    try {
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && key.startsWith(PREFIX)) {
+                keys.push(key.slice(PREFIX.length));
+            }
+        }
+    } catch {}
+    return keys;
+}
+
+function getAllStoredValues(): Record<string, unknown> {
+    const result: Record<string, unknown> = {};
+    for (const key of getAllKeysList()) {
+        result[key] = getValue(key as StorageKey);
+    }
+    return result;
+}
+
+// ============================================================
+// RESET / CLEAR / HAS
+// ============================================================
+
+function resetToDefaults(): void {
+    for (const [key, value] of Object.entries(DEFAULTS)) {
+        setValue(key as StorageKey, value);
+    }
+    logDebug('Reset to defaults');
+}
+
+function clearAllStorage(): void {
+    const keys: StorageKey[] = [
+        'hideStories', 'hideSferum', 'replaceTitle', 'hidePhone',
+        'blockAnalytics', 'showCrown', 'showMetadata', 'replaceMax',
+        'language', 'logView', 'fontFamily', 'chatTags', 'templates',
+    ];
+    for (const key of keys) {
+        removeValue(key);
+    }
+    logDebug('All keys cleared');
+}
+
+function hasValue(key: StorageKey): boolean {
+    if (cache.has(key)) return cache.get(key) !== null;
+    return readRaw(key) !== null;
+}
+
+// ============================================================
+// PUBLIC API
+// ============================================================
+
 export const storage = {
-    // Function for enabling or disabling storage debug mode
+    /** Enable debug logging of storage operations. */
     setDebug(enabled: boolean): void {
         debugMode = enabled;
     },
 
-    // Function for retrieving a value from storage
-    get<T = unknown>(key: StorageKey): T | null {
-        try {
-            const value = localStorage.getItem(PREFIX + key);
-            if (!value) return null;
-            return JSON.parse(value) as T;
-        } catch (error) {
-            if (debugMode) {
-                console.error(`[STORAGE] Get error for "${key}":`, error);
-            }
-            return null;
-        }
-    },
+    /** Read a value (cached). Returns null if missing or unparsable. */
+    get: getValue,
 
-    // Function for storing a value in storage
-    set<T = unknown>(key: StorageKey, value: T): void {
-        try {
-            localStorage.setItem(PREFIX + key, JSON.stringify(value));
-            if (debugMode) {
-                console.log(`💾 [STORAGE] Saved ${PREFIX + key} =`, value);
-            }
-        } catch (error) {
-            console.error(`[STORAGE] Set error for "${key}":`, error);
-        }
-    },
+    /** Write a value (updates cache + localStorage). */
+    set: setValue,
 
-    // Function for removing a key from storage
-    remove(key: StorageKey): void {
-        try {
-            localStorage.removeItem(PREFIX + key);
-            if (debugMode) {
-                console.log(`🗑️ [STORAGE] Removed ${PREFIX + key}`);
-            }
-        } catch (error) {
-            console.error(`[STORAGE] Remove error for "${key}":`, error);
-        }
-    },
+    /** Remove a value (updates cache + localStorage). */
+    remove: removeValue,
 
-    // Function for retrieving a boolean value from storage
-    getBoolean(key: StorageKey): boolean {
-    const raw = localStorage.getItem(PREFIX + key);
-    if (raw === null) {
-        return Boolean(DEFAULTS[key as keyof Settings]);
-    }
-    try {
-        return Boolean(JSON.parse(raw));
-    } catch {
-        return raw === 'true';
-    }
-},
+    /** Read a boolean value with default fallback. */
+    getBoolean: getBooleanValue,
 
-    // Function for storing a boolean value in storage
-    setBoolean(key: StorageKey, value: boolean): void {
-        this.set<boolean>(key, value);
-    },
+    /** Write a boolean value. */
+    setBoolean: setBooleanValue,
 
-    // Function for retrieving all settings from storage
-    getAll(): Settings {
-        return {
-            hideStories: this.getBoolean('hideStories'),
-            hideSferum: this.getBoolean('hideSferum'),
-            replaceTitle: this.getBoolean('replaceTitle'),
-            hidePhone: this.getBoolean('hidePhone'),
-            blockAnalytics: this.getBoolean('blockAnalytics'),
-            showCrown: this.getBoolean('showCrown'),
-            showMetadata: this.getBoolean('showMetadata'),
-            language: this.get<'ru' | 'en'>('language') || 'ru',
-            logView: this.getBoolean('logView'),
-            replaceMax: this.getBoolean('replaceMax'),
-        };
-    },
+    /** Snapshot of all known settings as a typed object. */
+    getAll: getAllSettings,
 
-    // Function for resetting all settings to default values
-    resetToDefaults(): void {
-        for (const [key, value] of Object.entries(DEFAULTS)) {
-            this.set(key as StorageKey, value);
-        }
-        if (debugMode) {
-            console.log('🔄 [STORAGE] Reset to defaults');
-        }
-    },
+    /** Reset all settings to defaults. */
+    resetToDefaults,
 
-    // Function for clearing all kmod storage keys
-    clearAll(): void {
-        const keys: StorageKey[] = [
-            'hideStories', 'hideSferum', 'replaceTitle', 'hidePhone',
-            'blockAnalytics', 'showCrown', 'showMetadata', 'replaceMax',
-            'language', 'logView'
-        ];
-        for (const key of keys) {
-            this.remove(key);
-        }
-        if (debugMode) {
-            console.log('🧹 [STORAGE] All keys cleared');
-        }
-    },
+    /** Remove all kmod_* keys (including chatTags, templates, fontFamily). */
+    clearAll: clearAllStorage,
 
-    // Function for checking if a key exists in storage
-    has(key: StorageKey): boolean {
-        return localStorage.getItem(PREFIX + key) !== null;
-    },
+    /** True if the key exists in cache or localStorage. */
+    has: hasValue,
 
-    // Function for retrieving all kmod keys from storage
-    getAllKeys(): string[] {
-        const keys: string[] = [];
-        for (let i = 0; i < localStorage.length; i++) {
-            const key = localStorage.key(i);
-            if (key && key.startsWith(PREFIX)) {
-                keys.push(key.replace(PREFIX, ''));
-            }
-        }
-        return keys;
-    },
+    /** List of kmod_* keys (without prefix). */
+    getAllKeys: getAllKeysList,
 
-    // Function for retrieving all kmod values from storage
-    getAllValues(): Record<string, unknown> {
-        const result: Record<string, unknown> = {};
-        const keys = this.getAllKeys();
-        for (const key of keys) {
-            result[key] = this.get(key as StorageKey);
-        }
-        return result;
+    /** Map of every kmod_* key to its parsed value. */
+    getAllValues: getAllStoredValues,
+
+    /** Drop the whole in-memory cache (rarely needed). */
+    invalidateCache(): void {
+        cache.clear();
     },
 };
 
 export { DEFAULTS as STORAGE_DEFAULTS };
+export type { Settings as StorageSettings };

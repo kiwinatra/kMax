@@ -1,20 +1,70 @@
-// src/ui/loader.ts
+/*
+* @author: potemk.in
+* @brief: Full-screen loader and crash screen.
+* @desc: Loader shows during init, fades out on hideLoader(). Crash screen
+*       appears on init failure or unhandled mod errors. Styles are injected
+*       once, lazily, on first use — no top-level IIFE.
+*/
 
 import { createElement } from '../core/dom';
 import { CONFIG } from '../config';
 
 // ============================================================
-// СТАРТОВЫЙ ЗАГРУЗЧИК — БРУТАЛЬНЫЙ СТИЛЬ
+// STYLES (injected once, lazily)
+// ============================================================
+
+const STYLE_ID = 'kmod-loader-styles';
+
+const CSS = `
+@keyframes kmodLoaderSpin {
+    to { transform: rotate(360deg); }
+}
+@keyframes kmodLoaderPulse {
+    0%, 100% { opacity: 0.5; transform: scale(1); }
+    50%      { opacity: 1;   transform: scale(1.08); }
+}
+@keyframes kmodLoaderFadeOut {
+    from { opacity: 1; }
+    to   { opacity: 0; }
+}
+@keyframes kmodCrashFade {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+@keyframes kmodCrashBounce {
+    0%, 100% { transform: scale(1) rotate(0deg); }
+    50%      { transform: scale(1.08) rotate(-2deg); }
+}
+`;
+
+function ensureStyles(): void {
+    if (document.getElementById(STYLE_ID)) return;
+    const style = document.createElement('style');
+    style.id = STYLE_ID;
+    style.textContent = CSS;
+    document.head.appendChild(style);
+}
+
+// ============================================================
+// UTILITIES
+// ============================================================
+
+function escapeHtml(str: string): string {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
+
+// ============================================================
+// LOADER
 // ============================================================
 
 let loaderElement: HTMLDivElement | null = null;
 let isHidden = false;
 
-/**
- * Показать загрузчик на весь экран
- */
 export function showLoader(): void {
     if (loaderElement) return;
+    ensureStyles();
 
     loaderElement = createElement('div', {
         styles: {
@@ -26,13 +76,13 @@ export function showLoader(): void {
             flexDirection: 'column',
             justifyContent: 'center',
             alignItems: 'center',
-            fontFamily: '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+            fontFamily:
+                '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
             color: '#f0f0f0',
             transition: 'opacity 0.6s ease',
         },
     });
 
-    // Огромная иконка
     const icon = createElement('div', {
         styles: {
             fontSize: '96px',
@@ -45,7 +95,6 @@ export function showLoader(): void {
         text: '⚡',
     });
 
-    // Огромный спиннер
     const spinner = createElement('div', {
         styles: {
             width: '72px',
@@ -59,7 +108,6 @@ export function showLoader(): void {
         },
     });
 
-    // ГЛАВНЫЙ ТЕКСТ — ОГРОМНЫЙ И ЖИРНЫЙ
     const title = createElement('div', {
         styles: {
             fontSize: '56px',
@@ -73,36 +121,18 @@ export function showLoader(): void {
         text: CONFIG.name,
     });
 
-    // Версия — контурная, большая
     const version = createElement('div', {
         styles: {
             fontSize: '24px',
             fontWeight: '700',
             color: 'transparent',
-            WebkitTextStroke: '2px rgba(255,255,255,0.25)',
+            webkitTextStroke: '2px rgba(255,255,255,0.25)',
             letterSpacing: '4px',
             textTransform: 'uppercase',
             userSelect: 'none',
         },
         text: `v${CONFIG.version}`,
     });
-
-    // Добавляем стили анимации
-    const style = document.createElement('style');
-    style.textContent = `
-        @keyframes kmodLoaderSpin {
-            to { transform: rotate(360deg); }
-        }
-        @keyframes kmodLoaderPulse {
-            0%, 100% { opacity: 0.5; transform: scale(1); }
-            50% { opacity: 1; transform: scale(1.08); }
-        }
-        @keyframes kmodLoaderFadeOut {
-            from { opacity: 1; }
-            to { opacity: 0; }
-        }
-    `;
-    document.head.appendChild(style);
 
     loaderElement.appendChild(icon);
     loaderElement.appendChild(spinner);
@@ -116,23 +146,22 @@ export function hideLoader(): void {
     isHidden = true;
 
     loaderElement.style.animation = 'kmodLoaderFadeOut 0.5s ease forwards';
-    
+    const el = loaderElement;
+
     setTimeout(() => {
-        if (loaderElement) {
-            loaderElement.remove();
-            loaderElement = null;
-        }
+        el.remove();
+        if (loaderElement === el) loaderElement = null;
         isHidden = false;
     }, 550);
 }
 
 // ============================================================
-// CRASH SCREEN — ОГРОМНЫЙ КОНТУРНЫЙ СТИЛЬ
+// CRASH SCREEN
 // ============================================================
 
 let crashElement: HTMLDivElement | null = null;
 
-interface CrashOptions {
+export interface CrashOptions {
     title?: string;
     message?: string;
     error?: Error | string;
@@ -140,14 +169,13 @@ interface CrashOptions {
 }
 
 export function showCrashScreen(options: CrashOptions): void {
-    if (loaderElement) {
-        hideLoader();
-    }
-
+    if (loaderElement) hideLoader();
     if (crashElement) {
         crashElement.remove();
         crashElement = null;
     }
+
+    ensureStyles();
 
     const {
         title = '⚠️ Ошибка',
@@ -157,7 +185,7 @@ export function showCrashScreen(options: CrashOptions): void {
     } = options;
 
     const errorMessage = error instanceof Error ? error.message : String(error || '');
-    const errorStack = error instanceof Error ? error.stack : '';
+    const errorStack = error instanceof Error ? error.stack || '' : '';
 
     crashElement = createElement('div', {
         styles: {
@@ -168,7 +196,8 @@ export function showCrashScreen(options: CrashOptions): void {
             display: 'flex',
             justifyContent: 'center',
             alignItems: 'center',
-            fontFamily: '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+            fontFamily:
+                '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
             animation: 'kmodCrashFade 0.4s ease',
         },
     });
@@ -182,7 +211,6 @@ export function showCrashScreen(options: CrashOptions): void {
         },
     });
 
-    // ОГРОМНАЯ ИКОНКА
     const icon = createElement('div', {
         styles: {
             fontSize: '120px',
@@ -194,7 +222,6 @@ export function showCrashScreen(options: CrashOptions): void {
         text: '💥',
     });
 
-    // ОГРОМНЫЙ ЗАГОЛОВОК — ЖИРНЫЙ
     const titleEl = createElement('div', {
         styles: {
             fontSize: '52px',
@@ -208,13 +235,12 @@ export function showCrashScreen(options: CrashOptions): void {
         text: title,
     });
 
-    // КОНТУРНЫЙ ПОДЗАГОЛОВОК
     const msgEl = createElement('div', {
         styles: {
             fontSize: '20px',
             fontWeight: '700',
             color: 'transparent',
-            WebkitTextStroke: '1.5px rgba(255,255,255,0.3)',
+            webkitTextStroke: '1.5px rgba(255,255,255,0.3)',
             letterSpacing: '2px',
             marginBottom: '24px',
             textTransform: 'uppercase',
@@ -223,12 +249,11 @@ export function showCrashScreen(options: CrashOptions): void {
         text: message,
     });
 
-    // Детали ошибки (если есть)
     let detailsHtml = '';
     if (errorMessage) {
         detailsHtml += `<div style="font-size:15px;color:#ed4245;background:rgba(237,66,69,0.08);padding:14px 20px;border-radius:12px;margin-bottom:16px;word-break:break-word;font-family:monospace;border:1px solid rgba(237,66,69,0.15);">${escapeHtml(errorMessage)}</div>`;
     }
-    if (errorStack && errorStack.length > 0) {
+    if (errorStack) {
         detailsHtml += `<details style="margin-bottom:16px;">
             <summary style="font-size:13px;color:rgba(255,255,255,0.3);cursor:pointer;font-weight:600;letter-spacing:1px;text-transform:uppercase;">📋 Стек ошибки</summary>
             <pre style="font-size:12px;color:rgba(255,255,255,0.2);background:rgba(0,0,0,0.4);padding:14px;border-radius:10px;overflow:auto;max-height:150px;margin-top:8px;white-space:pre-wrap;word-break:break-word;border:1px solid rgba(255,255,255,0.04);">${escapeHtml(errorStack)}</pre>
@@ -238,11 +263,8 @@ export function showCrashScreen(options: CrashOptions): void {
         detailsHtml += `<div style="font-size:13px;color:rgba(255,255,255,0.2);margin-top:8px;letter-spacing:0.5px;">${escapeHtml(details)}</div>`;
     }
 
-    const detailsEl = createElement('div', {
-        html: detailsHtml,
-    });
+    const detailsEl = createElement('div', { html: detailsHtml });
 
-    // КНОПКИ — БОЛЬШИЕ И ОКРУГЛЫЕ
     const btnWrapper = createElement('div', {
         styles: {
             display: 'flex',
@@ -253,7 +275,6 @@ export function showCrashScreen(options: CrashOptions): void {
         },
     });
 
-    // Кнопка "Перезагрузить"
     const reloadBtn = createElement('button', {
         styles: {
             background: '#4ade80',
@@ -270,7 +291,7 @@ export function showCrashScreen(options: CrashOptions): void {
         },
         text: '↻ Перезагрузить',
         events: {
-            click: () => { window.location.reload(); },
+            click: () => window.location.reload(),
             mouseenter: (e) => {
                 const btn = e.currentTarget as HTMLButtonElement;
                 btn.style.transform = 'scale(1.04)';
@@ -284,7 +305,6 @@ export function showCrashScreen(options: CrashOptions): void {
         },
     });
 
-    // Кнопка "Отключить мод" — контурная
     const disableBtn = createElement('button', {
         styles: {
             background: 'transparent',
@@ -333,18 +353,7 @@ export function showCrashScreen(options: CrashOptions): void {
     crashElement.appendChild(modal);
     document.body.appendChild(crashElement);
 
-    console.error('[KMOD] CRASH:', {
-        title,
-        message,
-        error,
-        details,
-    });
-}
-
-function escapeHtml(str: string): string {
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
+    console.error('[KMOD] CRASH:', { title, message, error, details });
 }
 
 export function isCrashScreenActive(): boolean {
@@ -352,24 +361,8 @@ export function isCrashScreenActive(): boolean {
 }
 
 // ============================================================
-// ГЛОБАЛЬНЫЕ СТИЛИ
+// DEFAULT EXPORT
 // ============================================================
-
-(function addGlobalStyles(): void {
-    const styles = `
-        @keyframes kmodCrashFade {
-            from { opacity: 0; }
-            to { opacity: 1; }
-        }
-        @keyframes kmodCrashBounce {
-            0%, 100% { transform: scale(1) rotate(0deg); }
-            50% { transform: scale(1.08) rotate(-2deg); }
-        }
-    `;
-    const styleEl = document.createElement('style');
-    styleEl.textContent = styles;
-    document.head.appendChild(styleEl);
-})();
 
 export default {
     showLoader,

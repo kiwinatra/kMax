@@ -1,488 +1,476 @@
-// src/features/chatTags/ui.ts
+/*
+* @author: potemk.in
+* @brief: Tag manager modal — create, edit, delete, list chat tags.
+* @desc: Refactored into small focused pieces. No duplicated edit/delete
+*       handlers. Uses CSS classes instead of inline styles where it matters.
+*       All user-provided text goes through textContent (no innerHTML injection).
+*/
 
 import { createElement } from '../../core/dom';
 import { logger } from '../../core/logger';
-import { getLocale } from '../../locales';
-import { getChatTags, addTag, removeTag, updateTag, getAllTags, generateTagId } from './storage';
+import { getAllTags, addTag, updateTag, removeTag, generateTagId } from './storage';
 import { ChatTag } from './types';
 
-let modalOverlay: HTMLDivElement | null = null;
+// ============================================================
+// CONSTANTS
+// ============================================================
 
 const COLORS = [
-    '#ef4444', // red
-    '#f59e0b', // amber
-    '#22c55e', // green
-    '#3b82f6', // blue
-    '#8b5cf6', // purple
-    '#ec4899', // pink
-    '#14b8a6', // teal
-    '#f97316', // orange
-    '#6366f1', // indigo
-    '#84cc16', // lime
+    '#ef4444', '#f59e0b', '#22c55e', '#3b82f6', '#8b5cf6',
+    '#ec4899', '#14b8a6', '#f97316', '#6366f1', '#84cc16',
 ];
 
-function getRandomColor(): string {
+const OVERLAY_CLASS = 'kmod-tag-manager-overlay';
+const FORM_CLASS = 'kmod-tag-form';
+
+const STYLE_ID = 'kmod-tag-manager-styles';
+
+const CSS = `
+.${OVERLAY_CLASS} {
+    position: fixed; inset: 0;
+    background: rgba(10, 10, 15, 0.85);
+    display: flex; justify-content: center; align-items: center;
+    z-index: 999999;
+    backdrop-filter: blur(8px);
+    animation: kmodTagFade 0.2s ease;
+}
+@keyframes kmodTagFade {
+    from { opacity: 0; } to { opacity: 1; }
+}
+.kmod-tag-manager-modal {
+    background: #0a0a0f;
+    border-radius: 24px;
+    padding: 32px;
+    max-width: 600px; width: 92%;
+    max-height: 80vh; overflow-y: auto;
+    border: 1px solid rgba(255,255,255,0.04);
+    box-shadow: 0 40px 120px rgba(0,0,0,0.8);
+    color: #f0f0f0;
+    font-family: 'Inter', -apple-system, sans-serif;
+}
+.kmod-tag-manager-header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 24px;
+}
+.kmod-tag-manager-title {
+    font-size: 24px; font-weight: 900; margin: 0; letter-spacing: -0.5px;
+}
+.kmod-tag-manager-close {
+    background: transparent;
+    border: 1px solid rgba(255,255,255,0.06);
+    color: rgba(255,255,255,0.3);
+    width: 36px; height: 36px; border-radius: 50%;
+    cursor: pointer; font-size: 18px;
+    transition: all 0.2s;
+}
+.kmod-tag-manager-close:hover {
+    color: #fff; border-color: rgba(255,255,255,0.15);
+}
+.kmod-tag-list { margin-bottom: 20px; max-height: 300px; overflow-y: auto; }
+.kmod-tag-empty {
+    text-align: center; color: rgba(255,255,255,0.2);
+    padding: 40px 0; font-size: 14px;
+}
+.kmod-tag-item {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 16px; margin-bottom: 8px;
+    background: rgba(255,255,255,0.02);
+    border-radius: 12px;
+    border: 1px solid rgba(255,255,255,0.03);
+    transition: background 0.2s;
+}
+.kmod-tag-item:hover { background: rgba(255,255,255,0.04); }
+.kmod-tag-item-info {
+    display: flex; align-items: center; gap: 12px;
+    flex: 1; min-width: 0;
+}
+.kmod-tag-color-dot {
+    width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0;
+}
+.kmod-tag-item-text { display: flex; flex-direction: column; min-width: 0; }
+.kmod-tag-item-name { font-weight: 700; font-size: 14px; color: #f0f0f0; }
+.kmod-tag-item-chat { font-size: 12px; color: rgba(255,255,255,0.3); }
+.kmod-tag-item-actions { display: flex; gap: 6px; }
+.kmod-tag-icon-btn {
+    background: transparent; border: none;
+    color: rgba(255,255,255,0.2);
+    cursor: pointer; padding: 4px 8px; border-radius: 6px;
+    font-size: 12px; transition: color 0.2s;
+}
+.kmod-tag-icon-btn:hover { color: rgba(255,255,255,0.6); }
+.kmod-tag-icon-btn.danger:hover { color: #ef4444; }
+.kmod-tag-add-btn {
+    background: rgba(255,255,255,0.06);
+    border: 1px dashed rgba(255,255,255,0.15);
+    color: rgba(255,255,255,0.5);
+    padding: 12px 20px; border-radius: 12px;
+    cursor: pointer; font-size: 14px; font-weight: 600;
+    width: 100%; transition: all 0.2s;
+}
+.kmod-tag-add-btn:hover {
+    background: rgba(255,255,255,0.08);
+    border-color: rgba(255,255,255,0.25);
+}
+.${FORM_CLASS} {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 16px;
+}
+.kmod-tag-form-label {
+    display: block; font-size: 12px; font-weight: 600;
+    color: rgba(255,255,255,0.3);
+    margin-bottom: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.kmod-tag-form-input {
+    width: 100%; padding: 10px 14px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 8px;
+    color: #f0f0f0; font-size: 14px;
+    outline: none; box-sizing: border-box;
+    transition: border-color 0.2s;
+    margin-bottom: 10px;
+}
+.kmod-tag-form-input:focus { border-color: rgba(255,255,255,0.15); }
+.kmod-tag-color-grid {
+    display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px;
+}
+.kmod-tag-color-btn {
+    width: 32px; height: 32px; border-radius: 50%;
+    border: 2px solid transparent;
+    cursor: pointer; transition: all 0.2s; padding: 0;
+}
+.kmod-tag-color-btn.selected { border-color: rgba(255,255,255,0.5); }
+.kmod-tag-form-actions { display: flex; gap: 8px; margin-top: 4px; }
+.kmod-tag-save-btn {
+    flex: 1; padding: 10px;
+    background: #4ade80; border: none; border-radius: 8px;
+    color: #0a0a0f; font-weight: 700; font-size: 14px;
+    cursor: pointer; transition: background 0.2s;
+}
+.kmod-tag-save-btn:hover { background: #34d399; }
+.kmod-tag-cancel-btn {
+    padding: 10px 20px;
+    background: transparent;
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 8px;
+    color: rgba(255,255,255,0.3);
+    font-weight: 600; font-size: 14px;
+    cursor: pointer; transition: color 0.2s;
+}
+.kmod-tag-cancel-btn:hover { color: rgba(255,255,255,0.6); }
+`;
+
+// ============================================================
+// STATE
+// ============================================================
+
+let overlayEl: HTMLDivElement | null = null;
+
+// ============================================================
+// STYLES
+// ============================================================
+
+function ensureStyles(): void {
+    if (document.getElementById(STYLE_ID)) return;
+    const style = document.createElement('style');
+    style.id = STYLE_ID;
+    style.textContent = CSS;
+    document.head.appendChild(style);
+}
+
+// ============================================================
+// HELPERS
+// ============================================================
+
+function randomColor(): string {
     return COLORS[Math.floor(Math.random() * COLORS.length)];
 }
 
-export function openTagManager(): void {
-    if (modalOverlay) {
-        modalOverlay.remove();
-        modalOverlay = null;
-    }
-    
-    const overlay = document.createElement('div');
-    overlay.className = 'kmod-tag-manager-overlay';
-    overlay.style.cssText = `
-        position: fixed;
-        inset: 0;
-        background: rgba(10, 10, 15, 0.85);
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        z-index: 999999;
-        backdrop-filter: blur(8px);
-        animation: kmodFadeScale 0.2s ease;
-    `;
-    
-    const modal = document.createElement('div');
-    modal.style.cssText = `
-        background: #0a0a0f;
-        border-radius: 24px;
-        padding: 32px;
-        max-width: 600px;
-        width: 92%;
-        max-height: 80vh;
-        overflow-y: auto;
-        border: 1px solid rgba(255,255,255,0.04);
-        box-shadow: 0 40px 120px rgba(0,0,0,0.8);
-        color: #f0f0f0;
-        font-family: 'Inter', -apple-system, sans-serif;
-    `;
-    
-    // Заголовок
-    const header = document.createElement('div');
-    header.style.cssText = `
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 24px;
-    `;
-    
-    const title = document.createElement('h2');
-    title.style.cssText = `
-        font-size: 24px;
-        font-weight: 900;
-        margin: 0;
-        letter-spacing: -0.5px;
-    `;
-    title.textContent = '🏷️ Теги чатов';
-    
-    const closeBtn = document.createElement('button');
-    closeBtn.style.cssText = `
-        background: transparent;
-        border: 1px solid rgba(255,255,255,0.06);
-        color: rgba(255,255,255,0.3);
-        width: 36px;
-        height: 36px;
-        border-radius: 50%;
-        cursor: pointer;
-        font-size: 18px;
-        transition: all 0.2s;
-    `;
-    closeBtn.textContent = '✕';
-    closeBtn.onclick = () => {
-        overlay.remove();
-        modalOverlay = null;
-    };
-    
-    header.appendChild(title);
-    header.appendChild(closeBtn);
-    modal.appendChild(header);
-    
-    // Список тегов
-    const listContainer = document.createElement('div');
-    listContainer.style.cssText = `
-        margin-bottom: 20px;
-        max-height: 300px;
-        overflow-y: auto;
-    `;
-    listContainer.id = 'kmod-tag-list';
-    
-    // Кнопка добавления
-    const addBtn = document.createElement('button');
-    addBtn.style.cssText = `
-        background: rgba(255,255,255,0.06);
-        border: 1px dashed rgba(255,255,255,0.15);
-        color: rgba(255,255,255,0.5);
-        padding: 12px 20px;
-        border-radius: 12px;
-        cursor: pointer;
-        font-size: 14px;
-        font-weight: 600;
-        width: 100%;
-        transition: all 0.2s;
-    `;
-    addBtn.textContent = '+ Добавить тег';
-    addBtn.onmouseenter = () => {
-        addBtn.style.background = 'rgba(255,255,255,0.08)';
-        addBtn.style.borderColor = 'rgba(255,255,255,0.25)';
-    };
-    addBtn.onmouseleave = () => {
-        addBtn.style.background = 'rgba(255,255,255,0.06)';
-        addBtn.style.borderColor = 'rgba(255,255,255,0.15)';
-    };
-    addBtn.onclick = () => {
-        // Удаляем старую форму, если есть
-        const oldForm = modal.querySelector('.kmod-tag-form');
-        if (oldForm) oldForm.remove();
-        const form = createTagForm(null, () => {
-            renderTagList(listContainer);
-        });
-        // Вставляем перед кнопкой добавления
-        modal.insertBefore(form, addBtn);
-    };
-    
-    modal.appendChild(listContainer);
-    modal.appendChild(addBtn);
-    overlay.appendChild(modal);
-    document.body.appendChild(overlay);
-    modalOverlay = overlay;
-    
-    renderTagList(listContainer);
+function makeInput(placeholder: string): HTMLInputElement {
+    const input = createElement('input', {
+        className: 'kmod-tag-form-input',
+    }) as HTMLInputElement;
+    input.type = 'text';
+    input.placeholder = placeholder;
+    return input;
 }
 
-function renderTagList(container: HTMLElement): void {
-    const tags = getAllTags();
-    container.innerHTML = '';
-    
-    if (tags.length === 0) {
-        const empty = document.createElement('div');
-        empty.style.cssText = `
-            text-align: center;
-            color: rgba(255,255,255,0.2);
-            padding: 40px 0;
-            font-size: 14px;
-        `;
-        empty.textContent = 'Нет тегов. Создайте первый!';
-        container.appendChild(empty);
-        return;
-    }
-    
-    for (const tag of tags) {
-        const item = document.createElement('div');
-        item.style.cssText = `
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 12px 16px;
-            margin-bottom: 8px;
-            background: rgba(255,255,255,0.02);
-            border-radius: 12px;
-            border: 1px solid rgba(255,255,255,0.03);
-            transition: all 0.2s;
-        `;
-        item.onmouseenter = () => {
-            item.style.background = 'rgba(255,255,255,0.04)';
-        };
-        item.onmouseleave = () => {
-            item.style.background = 'rgba(255,255,255,0.02)';
-        };
-        
-        const info = document.createElement('div');
-        info.style.cssText = `
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            flex: 1;
-            min-width: 0;
-        `;
-        
-        const colorDot = document.createElement('span');
-        colorDot.style.cssText = `
-            width: 12px;
-            height: 12px;
-            border-radius: 50%;
-            background: ${tag.color};
-            flex-shrink: 0;
-        `;
-        
-        const nameContainer = document.createElement('div');
-        nameContainer.style.cssText = `
-            display: flex;
-            flex-direction: column;
-            min-width: 0;
-        `;
-        
-        const tagName = document.createElement('span');
-        tagName.style.cssText = `
-            font-weight: 700;
-            font-size: 14px;
-            color: #f0f0f0;
-        `;
-        tagName.textContent = tag.tagName;
-        
-        const chatName = document.createElement('span');
-        chatName.style.cssText = `
-            font-size: 12px;
-            color: rgba(255,255,255,0.3);
-        `;
-        chatName.textContent = `Чат: ${tag.chatName}`;
-        
-        nameContainer.appendChild(tagName);
-        nameContainer.appendChild(chatName);
-        
-        info.appendChild(colorDot);
-        info.appendChild(nameContainer);
-        
-        const actions = document.createElement('div');
-        actions.style.cssText = `
-            display: flex;
-            gap: 6px;
-        `;
-        
-        const editBtn = document.createElement('button');
-        editBtn.style.cssText = `
-            background: transparent;
-            border: none;
-            color: rgba(255,255,255,0.2);
-            cursor: pointer;
-            padding: 4px 8px;
-            border-radius: 6px;
-            font-size: 12px;
-            transition: all 0.2s;
-        `;
-        editBtn.textContent = '✏️';
-        editBtn.onmouseenter = () => { editBtn.style.color = 'rgba(255,255,255,0.6)'; };
-        editBtn.onmouseleave = () => { editBtn.style.color = 'rgba(255,255,255,0.2)'; };
-        editBtn.onclick = () => {
-            // Удаляем старую форму, если есть
-            const oldForm = container.closest('.kmod-tag-manager-overlay')?.querySelector('.kmod-tag-form');
-            if (oldForm) oldForm.remove();
-            const form = createTagForm(tag, () => {
-                renderTagList(container);
-            });
-            // Вставляем перед кнопкой добавления
-            const addBtn = container.closest('.kmod-tag-manager-overlay')?.querySelector('button:last-child');
-            if (addBtn) {
-                addBtn.parentNode?.insertBefore(form, addBtn);
-            } else {
-                container.parentNode?.appendChild(form);
-            }
-        };
-        
-        const deleteBtn = document.createElement('button');
-        deleteBtn.style.cssText = `
-            background: transparent;
-            border: none;
-            color: rgba(255,255,255,0.2);
-            cursor: pointer;
-            padding: 4px 8px;
-            border-radius: 6px;
-            font-size: 12px;
-            transition: all 0.2s;
-        `;
-        deleteBtn.textContent = '🗑️';
-        deleteBtn.onmouseenter = () => { deleteBtn.style.color = '#ef4444'; };
-        deleteBtn.onmouseleave = () => { deleteBtn.style.color = 'rgba(255,255,255,0.2)'; };
-        deleteBtn.onclick = () => {
-            if (confirm(`Удалить тег "${tag.tagName}"?`)) {
-                removeTag(tag.id);
-                renderTagList(container);
-            }
-        };
-        
-        actions.appendChild(editBtn);
-        actions.appendChild(deleteBtn);
-        
-        item.appendChild(info);
-        item.appendChild(actions);
-        container.appendChild(item);
-    }
+function makeLabel(text: string): HTMLLabelElement {
+    const label = document.createElement('label');
+    label.className = 'kmod-tag-form-label';
+    label.textContent = text;
+    return label;
 }
 
-function createTagForm(existingTag: ChatTag | null, onSave: () => void): HTMLElement {
+// ============================================================
+// TAG FORM
+// ============================================================
+
+interface TagFormCallbacks {
+    onSave: () => void;
+    onCancel: () => void;
+}
+
+function createTagForm(
+    existing: ChatTag | null,
+    callbacks: TagFormCallbacks
+): HTMLElement {
+    const isEdit = existing !== null;
+    let selectedColor = existing?.color ?? randomColor();
+
     const form = document.createElement('div');
-    form.className = 'kmod-tag-form';
-    form.style.cssText = `
-        background: rgba(255,255,255,0.03);
-        border: 1px solid rgba(255,255,255,0.06);
-        border-radius: 12px;
-        padding: 16px;
-        margin-bottom: 16px;
-    `;
-    
-    const isEdit = existingTag !== null;
-    
-    const inputStyle = `
-        width: 100%;
-        padding: 10px 14px;
-        background: rgba(255,255,255,0.04);
-        border: 1px solid rgba(255,255,255,0.06);
-        border-radius: 8px;
-        color: #f0f0f0;
-        font-size: 14px;
-        outline: none;
-        box-sizing: border-box;
-        transition: border-color 0.2s;
-        margin-bottom: 10px;
-    `;
-    
-    const labelStyle = `
-        display: block;
-        font-size: 12px;
-        font-weight: 600;
-        color: rgba(255,255,255,0.3);
-        margin-bottom: 4px;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-    `;
-    
-    // Имя чата
-    const chatLabel = document.createElement('label');
-    chatLabel.style.cssText = labelStyle;
-    chatLabel.textContent = 'Имя чата';
-    form.appendChild(chatLabel);
-    
-    const chatInput = document.createElement('input');
-    chatInput.type = 'text';
-    chatInput.placeholder = 'Например: Анна';
-    chatInput.style.cssText = inputStyle;
-    if (isEdit) chatInput.value = existingTag.chatName;
+    form.className = FORM_CLASS;
+
+    // Chat name
+    form.appendChild(makeLabel('Имя чата'));
+    const chatInput = makeInput('Например: Анна');
+    if (existing) chatInput.value = existing.chatName;
     form.appendChild(chatInput);
-    
-    // Имя тега
-    const tagLabel = document.createElement('label');
-    tagLabel.style.cssText = labelStyle;
-    tagLabel.textContent = 'Название тега';
-    form.appendChild(tagLabel);
-    
-    const tagInput = document.createElement('input');
-    tagInput.type = 'text';
-    tagInput.placeholder = 'Например: Работа';
-    tagInput.style.cssText = inputStyle;
-    if (isEdit) tagInput.value = existingTag.tagName;
+
+    // Tag name
+    form.appendChild(makeLabel('Название тега'));
+    const tagInput = makeInput('Например: Работа');
+    if (existing) tagInput.value = existing.tagName;
     form.appendChild(tagInput);
-    
-    // Цвет
-    const colorLabel = document.createElement('label');
-    colorLabel.style.cssText = labelStyle;
-    colorLabel.textContent = 'Цвет';
-    form.appendChild(colorLabel);
-    
-    const colorWrapper = document.createElement('div');
-    colorWrapper.style.cssText = `
-        display: flex;
-        gap: 8px;
-        flex-wrap: wrap;
-        margin-bottom: 12px;
-    `;
-    
-    const selectedColor = isEdit ? existingTag.color : getRandomColor();
-    
+
+    // Color
+    form.appendChild(makeLabel('Цвет'));
+    const colorGrid = document.createElement('div');
+    colorGrid.className = 'kmod-tag-color-grid';
+
+    const colorButtons: HTMLButtonElement[] = [];
     for (const color of COLORS) {
-        const colorBtn = document.createElement('button');
-        colorBtn.style.cssText = `
-            width: 32px;
-            height: 32px;
-            border-radius: 50%;
-            background: ${color};
-            border: 2px solid ${color === selectedColor ? 'rgba(255,255,255,0.5)' : 'transparent'};
-            cursor: pointer;
-            transition: all 0.2s;
-            padding: 0;
-        `;
-        colorBtn.onclick = () => {
-            colorWrapper.querySelectorAll('button').forEach(b => {
-                b.style.borderColor = 'transparent';
-            });
-            colorBtn.style.borderColor = 'rgba(255,255,255,0.5)';
-            colorInput.value = color;
-        };
-        if (color === selectedColor) {
-            colorBtn.style.borderColor = 'rgba(255,255,255,0.5)';
-        }
-        colorWrapper.appendChild(colorBtn);
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'kmod-tag-color-btn';
+        btn.style.background = color;
+        if (color === selectedColor) btn.classList.add('selected');
+        btn.addEventListener('click', () => {
+            selectedColor = color;
+            for (const b of colorButtons) b.classList.remove('selected');
+            btn.classList.add('selected');
+        });
+        colorButtons.push(btn);
+        colorGrid.appendChild(btn);
     }
-    
-    const colorInput = document.createElement('input');
-    colorInput.type = 'hidden';
-    colorInput.value = selectedColor;
-    form.appendChild(colorWrapper);
-    form.appendChild(colorInput);
-    
-    // Кнопки
-    const btnWrapper = document.createElement('div');
-    btnWrapper.style.cssText = `
-        display: flex;
-        gap: 8px;
-        margin-top: 4px;
-    `;
-    
+    form.appendChild(colorGrid);
+
+    // Actions
+    const actions = document.createElement('div');
+    actions.className = 'kmod-tag-form-actions';
+
     const saveBtn = document.createElement('button');
-    saveBtn.style.cssText = `
-        flex: 1;
-        padding: 10px;
-        background: #4ade80;
-        border: none;
-        border-radius: 8px;
-        color: #0a0a0f;
-        font-weight: 700;
-        font-size: 14px;
-        cursor: pointer;
-        transition: all 0.2s;
-    `;
+    saveBtn.type = 'button';
+    saveBtn.className = 'kmod-tag-save-btn';
     saveBtn.textContent = isEdit ? '💾 Сохранить' : '➕ Добавить';
-    saveBtn.onmouseenter = () => { saveBtn.style.background = '#34d399'; };
-    saveBtn.onmouseleave = () => { saveBtn.style.background = '#4ade80'; };
-    saveBtn.onclick = () => {
+    saveBtn.addEventListener('click', () => {
         const chatName = chatInput.value.trim();
         const tagName = tagInput.value.trim();
-        const color = colorInput.value;
-        
+
         if (!chatName || !tagName) {
             alert('Заполните все поля!');
             return;
         }
-        
-        if (isEdit) {
-            updateTag(existingTag.id, { chatName, tagName, color });
+
+        if (isEdit && existing) {
+            updateTag(existing.id, { chatName, tagName, color: selectedColor });
         } else {
             addTag({
                 id: generateTagId(),
                 chatName,
                 tagName,
-                color,
+                color: selectedColor,
                 createdAt: Date.now(),
             });
         }
-        
-        form.remove();
-        onSave();
-    };
-    
+
+        callbacks.onSave();
+    });
+
     const cancelBtn = document.createElement('button');
-    cancelBtn.style.cssText = `
-        padding: 10px 20px;
-        background: transparent;
-        border: 1px solid rgba(255,255,255,0.06);
-        border-radius: 8px;
-        color: rgba(255,255,255,0.3);
-        font-weight: 600;
-        font-size: 14px;
-        cursor: pointer;
-        transition: all 0.2s;
-    `;
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'kmod-tag-cancel-btn';
     cancelBtn.textContent = 'Отмена';
-    cancelBtn.onmouseenter = () => { cancelBtn.style.color = 'rgba(255,255,255,0.6)'; };
-    cancelBtn.onmouseleave = () => { cancelBtn.style.color = 'rgba(255,255,255,0.3)'; };
-    cancelBtn.onclick = () => {
-        form.remove();
-    };
-    
-    btnWrapper.appendChild(saveBtn);
-    btnWrapper.appendChild(cancelBtn);
-    form.appendChild(btnWrapper);
-    
+    cancelBtn.addEventListener('click', callbacks.onCancel);
+
+    actions.appendChild(saveBtn);
+    actions.appendChild(cancelBtn);
+    form.appendChild(actions);
+
     return form;
+}
+
+// ============================================================
+// TAG LIST
+// ============================================================
+
+function createTagItem(tag: ChatTag, onChanged: () => void): HTMLElement {
+    const item = document.createElement('div');
+    item.className = 'kmod-tag-item';
+
+    // Info side
+    const info = document.createElement('div');
+    info.className = 'kmod-tag-item-info';
+
+    const dot = document.createElement('span');
+    dot.className = 'kmod-tag-color-dot';
+    dot.style.background = tag.color;
+
+    const text = document.createElement('div');
+    text.className = 'kmod-tag-item-text';
+
+    const nameEl = document.createElement('span');
+    nameEl.className = 'kmod-tag-item-name';
+    nameEl.textContent = tag.tagName;
+
+    const chatEl = document.createElement('span');
+    chatEl.className = 'kmod-tag-item-chat';
+    chatEl.textContent = `Чат: ${tag.chatName}`;
+
+    text.appendChild(nameEl);
+    text.appendChild(chatEl);
+    info.appendChild(dot);
+    info.appendChild(text);
+
+    // Actions side
+    const actions = document.createElement('div');
+    actions.className = 'kmod-tag-item-actions';
+
+    const editBtn = document.createElement('button');
+    editBtn.className = 'kmod-tag-icon-btn';
+    editBtn.textContent = '✏️';
+    editBtn.addEventListener('click', () => {
+        // Only one form open at a time
+        document.querySelectorAll(`.${FORM_CLASS}`).forEach((f) => f.remove());
+
+        const form = createTagForm(tag, {
+            onSave: () => {
+                form.remove();
+                onChanged();
+            },
+            onCancel: () => form.remove(),
+        });
+        item.parentElement?.insertBefore(form, item);
+    });
+
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'kmod-tag-icon-btn danger';
+    deleteBtn.textContent = '🗑️';
+    deleteBtn.addEventListener('click', () => {
+        if (!confirm(`Удалить тег "${tag.tagName}"?`)) return;
+        removeTag(tag.id);
+        onChanged();
+    });
+
+    actions.appendChild(editBtn);
+    actions.appendChild(deleteBtn);
+
+    item.appendChild(info);
+    item.appendChild(actions);
+    return item;
+}
+
+function renderTagList(container: HTMLElement): void {
+    const tags = getAllTags();
+    container.innerHTML = '';
+
+    if (tags.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'kmod-tag-empty';
+        empty.textContent = 'Нет тегов. Создайте первый!';
+        container.appendChild(empty);
+        return;
+    }
+
+    const onChanged = () => renderTagList(container);
+    for (const tag of tags) {
+        container.appendChild(createTagItem(tag, onChanged));
+    }
+}
+
+// ============================================================
+// MODAL
+// ============================================================
+
+function closeModal(): void {
+    if (overlayEl) {
+        overlayEl.remove();
+        overlayEl = null;
+    }
+}
+
+export function openTagManager(): void {
+    if (overlayEl) closeModal();
+    ensureStyles();
+
+    const overlay = document.createElement('div');
+    overlay.className = OVERLAY_CLASS;
+
+    const modal = document.createElement('div');
+    modal.className = 'kmod-tag-manager-modal';
+
+    // Header
+    const header = document.createElement('div');
+    header.className = 'kmod-tag-manager-header';
+
+    const title = document.createElement('h2');
+    title.className = 'kmod-tag-manager-title';
+    title.textContent = '🏷️ Теги чатов';
+
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'kmod-tag-manager-close';
+    closeBtn.textContent = '✕';
+    closeBtn.addEventListener('click', closeModal);
+
+    header.appendChild(title);
+    header.appendChild(closeBtn);
+
+    // List
+    const listContainer = document.createElement('div');
+    listContainer.className = 'kmod-tag-list';
+
+    // Add button
+    const addBtn = document.createElement('button');
+    addBtn.className = 'kmod-tag-add-btn';
+    addBtn.textContent = '+ Добавить тег';
+    addBtn.addEventListener('click', () => {
+        document.querySelectorAll(`.${FORM_CLASS}`).forEach((f) => f.remove());
+        const form = createTagForm(null, {
+            onSave: () => {
+                form.remove();
+                renderTagList(listContainer);
+            },
+            onCancel: () => form.remove(),
+        });
+        modal.insertBefore(form, addBtn);
+    });
+
+    modal.appendChild(header);
+    modal.appendChild(listContainer);
+    modal.appendChild(addBtn);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+    overlayEl = overlay;
+
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) closeModal();
+    });
+
+    renderTagList(listContainer);
+    logger.debug('🏷️ Tag manager opened');
+}
+
+// ============================================================
+// CLEANUP
+// ============================================================
+
+if (typeof window !== 'undefined') {
+    window.addEventListener('beforeunload', () => {
+        closeModal();
+    });
 }

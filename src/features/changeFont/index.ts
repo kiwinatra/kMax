@@ -1,80 +1,231 @@
-// src/features/changeFont/index.ts
+/*
+* @author: potemk.in
+* @brief: Site-wide font switcher using a single CSS custom property.
+* @desc: Replaces the previous "* { font-family !important }" approach, which
+*       forced a full style recalc on every element, with a :root variable and
+*       an explicit rule for html/body plus form controls (which don't inherit
+*       by default). Google Fonts are loaded via a single <link> tag, only when
+*       a Google font is actually selected, and swapped/removed on change.
+*       No timers, no observers — pure, idempotent apply.
+*/
 
 import { logger } from '../../core/logger';
 import { storage } from '../../core/storage';
 import { FONTS } from '../../offsets';
 
-let styleElement: HTMLStyleElement | null = null;
+// ============================================================
+// TYPES & EXPORTED LISTS
+// ============================================================
 
-function getFontValue(fontLabel: string): string {
-    const allFonts = [...FONTS.system, ...FONTS.google];
-    const found = allFonts.find(f => f.label === fontLabel);
-    return found ? found.value : FONTS.system[0].value;
+export type FontCategory = 'system' | 'google';
+
+export type FontOption =
+    | typeof FONTS.system[number]
+    | typeof FONTS.google[number];
+
+export const systemFonts = FONTS.system;
+export const googleFonts = FONTS.google;
+export const fontOptions: FontOption[] = [...FONTS.system, ...FONTS.google];
+
+// ============================================================
+// CONSTANTS
+// ============================================================
+
+const STYLE_ID = 'kmod-font-style';
+const LINK_ID = 'kmod-font-link';
+const STORAGE_KEY = 'fontFamily';
+const DEFAULT_FONT_VALUE = FONTS.system[0].value;
+
+// ============================================================
+// STATE
+// ============================================================
+
+let isEnabled = false;
+let currentLabel: string | null = null;
+let styleEl: HTMLStyleElement | null = null;
+let linkEl: HTMLLinkElement | null = null;
+
+// ============================================================
+// LOOKUPS
+// ============================================================
+
+export function getFontByLabel(label: string): FontOption | undefined {
+    return fontOptions.find((f) => f.label === label);
 }
 
-function applyFont(fontFamily: string): void {
-    // Удаляем старый стиль
-    if (styleElement) {
-        styleElement.remove();
-        styleElement = null;
-    }
+function getFontValue(label: string): string {
+    return getFontByLabel(label)?.value ?? DEFAULT_FONT_VALUE;
+}
 
-    if (!fontFamily || fontFamily === '') {
-        // Сброс к стандартному
-        document.body.style.fontFamily = '';
+// ============================================================
+// STYLE / LINK MANAGEMENT
+// ============================================================
+
+function ensureStyleElement(): HTMLStyleElement {
+    if (styleEl && document.head.contains(styleEl)) return styleEl;
+
+    const existing = document.getElementById(STYLE_ID);
+    if (existing) existing.remove();
+
+    styleEl = document.createElement('style');
+    styleEl.id = STYLE_ID;
+    document.head.appendChild(styleEl);
+    return styleEl;
+}
+
+function removeStyleElement(): void {
+    if (styleEl) {
+        styleEl.remove();
+        styleEl = null;
+    }
+    const existing = document.getElementById(STYLE_ID);
+    if (existing) existing.remove();
+}
+
+function ensureFontLink(url: string): void {
+    if (linkEl && linkEl.href === url && document.head.contains(linkEl)) return;
+
+    if (linkEl) {
+        linkEl.remove();
+        linkEl = null;
+    }
+    const existing = document.getElementById(LINK_ID);
+    if (existing) existing.remove();
+
+    linkEl = document.createElement('link');
+    linkEl.id = LINK_ID;
+    linkEl.rel = 'stylesheet';
+    linkEl.href = url;
+    document.head.appendChild(linkEl);
+}
+
+function removeFontLink(): void {
+    if (linkEl) {
+        linkEl.remove();
+        linkEl = null;
+    }
+    const existing = document.getElementById(LINK_ID);
+    if (existing) existing.remove();
+}
+
+// ============================================================
+// APPLY (the core, cheap path)
+// ============================================================
+
+function writeFontRule(fontValue: string): void {
+    const el = ensureStyleElement();
+    el.textContent = `
+:root {
+    --kmod-font: ${fontValue};
+}
+html, body {
+    font-family: var(--kmod-font) !important;
+}
+button, input, textarea, select, option, optgroup {
+    font-family: var(--kmod-font) !important;
+}
+`;
+}
+
+function clearFontRule(): void {
+    removeStyleElement();
+}
+
+// ============================================================
+// PUBLIC API
+// ============================================================
+
+/**
+ * Applies a font by its label. Persists the choice. Loads the Google Font
+ * stylesheet only if the selected font requires one.
+ */
+export async function setFont(label: string): Promise<void> {
+    const font = getFontByLabel(label);
+    if (!font) {
+        logger.warn(`🔤 Font not found: ${label}`);
         return;
     }
 
-    // Создаём новый стиль с !important для переопределения всех стилей сайта
-    styleElement = document.createElement('style');
-    styleElement.id = 'kmod-font-style';
-    styleElement.textContent = `
-        * {
-            font-family: ${fontFamily} !important;
-        }
-    `;
-    document.head.appendChild(styleElement);
-    logger.debug(`🔤 Font applied: ${fontFamily}`);
+    currentLabel = label;
+    storage.set(STORAGE_KEY, label);
+
+    if ('url' in font && font.url) {
+        ensureFontLink(font.url);
+    } else {
+        removeFontLink();
+    }
+
+    writeFontRule(font.value);
+    logger.debug(`🔤 Font applied: ${label}`);
 }
 
-export function apply(): void {
-    const enabled = storage.getBoolean('fontFamily' as any); // но у нас ключ не boolean, а строка
-    // На самом деле фича будет всегда включена, но мы храним выбранный шрифт в storage
-    // Для единообразия будем использовать отдельный ключ для состояния включено/выключено?
-    // Лучше сделать так: фича всегда активна, но если пользователь выбрал шрифт, он применяется.
-    // Если пользователь сбросит выбор на "Системный", то шрифт сбрасывается.
-    // Поэтому apply будет читать выбранный шрифт из storage и применять.
-    const savedFont = storage.get<string>('fontFamily');
-    if (savedFont) {
-        applyFont(savedFont);
-    } else {
-        // Если не сохранено, сбрасываем
-        applyFont(FONTS.system[0].value); // или сброс
+/** Reads the persisted font (if any) and applies it. Idempotent. */
+export function applyStoredFont(): void {
+    const saved = storage.get<string>(STORAGE_KEY);
+    if (!saved) return;
+
+    const font = getFontByLabel(saved);
+    if (!font) {
+        logger.warn(`🔤 Saved font not found: ${saved}`);
+        storage.remove(STORAGE_KEY);
+        return;
     }
+
+    currentLabel = saved;
+    if ('url' in font && font.url) {
+        ensureFontLink(font.url);
+    } else {
+        removeFontLink();
+    }
+    writeFontRule(font.value);
+    isEnabled = true;
+}
+
+/** Registry hook — reapply persisted font. */
+export function apply(): void {
+    const saved = storage.get<string>(STORAGE_KEY);
+    if (saved) applyStoredFont();
 }
 
 export function enable(): void {
-    // Эта фича не требует observer, просто применяем шрифт
-    apply();
+    if (isEnabled) return;
+    isEnabled = true;
+    applyStoredFont();
     logger.info('🔤 Font feature enabled');
 }
 
 export function disable(): void {
-    // Сброс к системному
-    applyFont(FONTS.system[0].value);
-    storage.remove('fontFamily');
+    if (!isEnabled) return;
+    isEnabled = false;
+
+    currentLabel = null;
+    storage.remove(STORAGE_KEY);
+    clearFontRule();
+    removeFontLink();
+
     logger.info('🔤 Font feature disabled (reset to system)');
 }
 
 export function toggle(): boolean {
-    // В toggle мы переключаем состояние включено/выключено? 
-    // Поскольку фича всегда активна, можно просто применять текущий шрифт.
-    // Но для совместимости с toggle в UI, мы можем переключать состояние, но лучше использовать отдельный булевый ключ.
-    // Однако проще: фича всегда включена, а выбор шрифта - отдельный параметр.
-    // Для единообразия создадим ключ 'fontEnabled'?
-    // Но пользователь хочет выбирать шрифт из списка, а не включать/выключать.
-    // Поэтому в настройках будет просто select с выбором шрифта, и при выборе шрифт применяется.
-    // Мы не будем использовать toggle для этой фичи в обычном смысле.
-    // Для совместимости с registry, мы можем сделать apply, enable, disable как выше.
+    if (isEnabled) {
+        disable();
+        return false;
+    }
+    enable();
     return true;
+}
+
+export function isFeatureEnabled(): boolean {
+    return isEnabled;
+}
+
+// ============================================================
+// CLEANUP
+// ============================================================
+
+if (typeof window !== 'undefined') {
+    window.addEventListener('beforeunload', () => {
+        styleEl = null;
+        linkEl = null;
+    });
 }

@@ -1,10 +1,21 @@
 /*
 * @author: potemk.in
-* @brief: Performance utilities including throttling, debouncing, timing, idle execution, and tab visibility management.
-* @desc: This file provides a collection of performance optimization utilities including throttle and debounce functions for rate-limiting function calls, performance measurement with warnings for slow operations, idle callback scheduling with fallback, and tab visibility detection with change listeners.
+* @brief: Performance utilities — throttling, debouncing, idle scheduling.
+* @desc: Small set of rate-limiting and scheduling helpers. whenIdle is the
+*       only one used by the bootstrap; throttle/debounce are kept as tiny
+*       shared utilities for future features. Tab-visibility helpers are
+*       provided for features that need to pause when hidden — the central
+*       observer already handles its own visibility, so this is opt-in.
 */
 
-// Function for throttling function calls to a specified limit
+// ============================================================
+// THROTTLE
+// ============================================================
+
+/**
+ * Call `fn` at most once per `limit` ms.
+ * Executes immediately on first call, then schedules the last call.
+ */
 export function throttle<T extends (...args: any[]) => void>(
     fn: T,
     limit: number
@@ -13,7 +24,7 @@ export function throttle<T extends (...args: any[]) => void>(
     let lastArgs: any[] | null = null;
     let lastThis: any = null;
 
-    return function(this: any, ...args: any[]) {
+    return function (this: any, ...args: any[]) {
         if (!inThrottle) {
             fn.apply(this, args);
             inThrottle = true;
@@ -32,15 +43,21 @@ export function throttle<T extends (...args: any[]) => void>(
     } as T;
 }
 
-// Function for debouncing function calls with a delay
+// ============================================================
+// DEBOUNCE
+// ============================================================
+
+/**
+ * Call `fn` only after `delay` ms of silence.
+ */
 export function debounce<T extends (...args: any[]) => void>(
     fn: T,
     delay: number
 ): T {
     let timer: number | null = null;
 
-    return function(this: any, ...args: any[]) {
-        if (timer) clearTimeout(timer);
+    return function (this: any, ...args: any[]) {
+        if (timer !== null) clearTimeout(timer);
         timer = window.setTimeout(() => {
             timer = null;
             fn.apply(this, args);
@@ -48,36 +65,32 @@ export function debounce<T extends (...args: any[]) => void>(
     } as T;
 }
 
-// Function for measuring execution time with performance warnings
-export function measureTime<T>(label: string, fn: () => T): T {
-    const start = performance.now();
-    try {
-        return fn();
-    } finally {
-        const duration = performance.now() - start;
-        if (duration > 10) {
-            console.warn(`[KMOD] ⚠️ ${label} took ${duration.toFixed(2)}ms`);
-        }
-    }
-}
+// ============================================================
+// IDLE SCHEDULING
+// ============================================================
 
-// Function for scheduling a callback during idle time
+/**
+ * Run callback when the browser is idle, or after `timeout` ms at the latest.
+ * Falls back to setTimeout on browsers without requestIdleCallback.
+ */
 export function whenIdle(callback: () => void, timeout: number = 2000): void {
-    if ('requestIdleCallback' in window) {
-        requestIdleCallback(() => callback(), { timeout });
+    if (typeof (window as any).requestIdleCallback === 'function') {
+        (window as any).requestIdleCallback(() => callback(), { timeout });
     } else {
-        setTimeout(callback, 100);
+        window.setTimeout(callback, 100);
     }
 }
 
-// Function for checking if the current tab is visible
+// ============================================================
+// TAB VISIBILITY
+// ============================================================
+
 export function isTabVisible(): boolean {
     return document.visibilityState === 'visible';
 }
 
-// Function for subscribing to tab visibility changes
 export function onVisibilityChange(callback: (visible: boolean) => void): () => void {
-    const handler = () => callback(isTabVisible());
+    const handler = (): void => callback(isTabVisible());
     document.addEventListener('visibilitychange', handler);
     return () => document.removeEventListener('visibilitychange', handler);
 }

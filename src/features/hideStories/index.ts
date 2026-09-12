@@ -1,32 +1,36 @@
-// src/features/hideStories/index.ts
+/*
+* @author: potemk.in
+* @brief: Hides the stories block in the feed.
+* @desc: Pure apply-based feature. Registry triggers apply() when `.storiesStack` nodes appear in the DOM batch. Idempotent — toggling display is a no-op if state already matches storage flag. No local observer, no timers, no element cache.
+*/
 
 import { logger } from '../../core/logger';
 import { storage } from '../../core/storage';
-import { watchDOM } from '../../core/observer';
 import { qsa } from '../../core/dom';
-import { OFFSETS } from '../../offsets';
 
-const DEBOUNCE_DELAY = 300;
-const STORIES_SELECTOR = '.storiesStack.svelte-1rr6jx2'; // ← обновлённый селектор
+// ============================================================
+// CONSTANTS
+// ============================================================
+
+const STORIES_SELECTOR = '.storiesStack.svelte-1rr6jx2';
+const FALLBACK_SELECTOR = '.storiesStack';
+
+// ============================================================
+// STATE
+// ============================================================
 
 let isEnabled = false;
-let unwatch: (() => void) | null = null;
-let debounceTimer: number | null = null;
-let cachedElements: HTMLElement[] = [];
+
+// ============================================================
+// DOM PROCESSING
+// ============================================================
 
 function getStoriesElements(): HTMLElement[] {
-    if (cachedElements.length > 0 && cachedElements.some(el => document.contains(el))) {
-        return cachedElements;
+    let elements = qsa<HTMLElement>(STORIES_SELECTOR);
+    if (elements.length === 0) {
+        elements = qsa<HTMLElement>(FALLBACK_SELECTOR);
     }
-    // Ищем все элементы storiesStack
-    cachedElements = qsa<HTMLElement>(STORIES_SELECTOR);
-    
-    // Если не нашли по основному селектору - пробуем fallback
-    if (cachedElements.length === 0) {
-        cachedElements = qsa<HTMLElement>('.storiesStack');
-    }
-    
-    return cachedElements;
+    return elements;
 }
 
 function hideAll(): void {
@@ -55,87 +59,43 @@ function showAll(): void {
     if (count > 0) {
         logger.debug(`📚 Shown ${count} stories`);
     }
-    cachedElements = [];
 }
 
-function processPage(): void {
-    const enabled = storage.getBoolean('hideStories');
-    if (enabled) {
+// ============================================================
+// PUBLIC API
+// ============================================================
+
+/** Idempotent — syncs display state with current storage flag. */
+export function apply(): void {
+    if (storage.getBoolean('hideStories')) {
         hideAll();
     } else {
         showAll();
     }
 }
 
-function debouncedProcess(): void {
-    if (debounceTimer) {
-        clearTimeout(debounceTimer);
-    }
-    debounceTimer = window.setTimeout(() => {
-        debounceTimer = null;
-        processPage();
-    }, DEBOUNCE_DELAY);
-}
-
-export function apply(): void {
-    processPage();
-}
-
 export function enable(): void {
     if (isEnabled) return;
     isEnabled = true;
-
     logger.info('📚 Stories hide enabled');
-    processPage();
-
-    if (!unwatch) {
-        unwatch = watchDOM(() => {
-            debouncedProcess();
-        });
-    }
+    hideAll();
 }
 
 export function disable(): void {
     if (!isEnabled) return;
     isEnabled = false;
-
-    if (unwatch) {
-        unwatch();
-        unwatch = null;
-    }
-
-    if (debounceTimer) {
-        clearTimeout(debounceTimer);
-        debounceTimer = null;
-    }
-
     showAll();
-    cachedElements = [];
-
     logger.info('📚 Stories hide disabled');
 }
 
 export function toggle(): boolean {
-    const current = storage.getBoolean('hideStories');
-    const newState = !current;
+    const newState = !storage.getBoolean('hideStories');
     storage.setBoolean('hideStories', newState);
-
-    if (newState) {
-        enable();
-    } else {
-        disable();
-    }
-
+    if (newState) enable();
+    else disable();
     return newState;
 }
 
-window.addEventListener('beforeunload', () => {
-    if (unwatch) {
-        unwatch();
-        unwatch = null;
-    }
-    if (debounceTimer) {
-        clearTimeout(debounceTimer);
-        debounceTimer = null;
-    }
-});
+export function isFeatureEnabled(): boolean {
+    return isEnabled;
+}

@@ -282,6 +282,20 @@ async function emulate(): Promise<void> {
                     hash: '',
                 },
                 open: () => ({ document: { write: () => {}, close: () => {} }, focus: () => {} }),
+                // ===== ДОБАВЛЯЕМ НЕДОСТАЮЩИЕ БРАУЗЕРНЫЕ API =====
+                setTimeout: setTimeout,
+                clearTimeout: clearTimeout,
+                setInterval: setInterval,
+                clearInterval: clearInterval,
+                requestAnimationFrame: (cb: any) => setTimeout(cb, 16),
+                cancelAnimationFrame: (id: any) => clearTimeout(id),
+                performance: {
+                    now: () => Date.now(),
+                },
+                navigator: {
+                    userAgent: 'Node.js',
+                },
+                // ===== КОНЕЦ ДОБАВЛЕНИЙ =====
             },
             document: {
                 createElement: (tag: string) => ({ 

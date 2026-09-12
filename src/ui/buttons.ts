@@ -1,40 +1,54 @@
-// src/ui/buttons.ts
+/*
+* @author: potemk.in
+* @brief: Creates the "Settings" button in the sidebar next to the native settings tab.
+* @desc: Subscribes to the centralized DOM observer via watchDOM with a selector filter, so it only reacts when the header title or settings container appears. Idempotent — safe to call on every batch. No local MutationObserver, no debounce timers.
+*/
 
-import { createElement, qs } from '../core/dom';
+import { createElement } from '../core/dom';
 import { logger } from '../core/logger';
 import { openSettingsModal } from './settingsModal';
 import { getLocale } from '../locales';
 import { createSettingsIcon, createChevronIcon } from './icons';
-import { debounce } from '../core/performance';
-import { domCache } from '../core/cache';
+import { watchDOM } from '../core/observer';
+
+// ============================================================
+// CONSTANTS
+// ============================================================
 
 const SETTINGS_BUTTON_CLASS = 'kmod-settings-btn';
-const CONTAINER_CACHE_KEY = 'settings-container';
+const HEADER_ID = 'aside-header-title';
+const SETTINGS_CONTAINER_SELECTOR = '.settingsTab.svelte-6bkz6t';
+const SETTINGS_CONTAINER_FALLBACK = '.settingsTab';
 
-let observer: MutationObserver | null = null;
+const HEADER_TEXT_MATCHERS = ['Settings', 'Настройки'];
+
+// ============================================================
+// STATE
+// ============================================================
+
+let unwatch: (() => void) | null = null;
 let isCreating = false;
-let initialCheckDone = false;
+
+// ============================================================
+// CONTAINER RESOLUTION
+// ============================================================
 
 function getContainer(): Element | null {
-    // 1. Проверяем кеш
-    const cached = domCache.get<Element>(CONTAINER_CACHE_KEY);
-    if (cached && document.contains(cached)) {
-        return cached;
-    }
-
-    // 2. Ищем заново
-    const header = document.getElementById('aside-header-title');
+    const header = document.getElementById(HEADER_ID);
     if (!header) return null;
 
     const headerText = header.textContent?.trim() || '';
-    if (headerText !== 'Settings' && headerText !== 'Настройки') return null;
+    if (!HEADER_TEXT_MATCHERS.includes(headerText)) return null;
 
-    const container = document.querySelector('.settingsTab.svelte-6bkz6t');
-    if (container) {
-        domCache.set(CONTAINER_CACHE_KEY, container, 10000); // 10 секунд
-    }
-    return container || null;
+    return (
+        document.querySelector(SETTINGS_CONTAINER_SELECTOR) ||
+        document.querySelector(SETTINGS_CONTAINER_FALLBACK)
+    );
 }
+
+// ============================================================
+// ICON WRAPPER
+// ============================================================
 
 function createSvgWrapper(icon: SVGSVGElement, className: string): HTMLSpanElement {
     const wrapper = createElement('span', { className });
@@ -45,15 +59,19 @@ function createSvgWrapper(icon: SVGSVGElement, className: string): HTMLSpanEleme
     return wrapper;
 }
 
-export function createSettingsButton(): void {
-    if (isCreating) return;
+// ============================================================
+// BUTTON CREATION
+// ============================================================
+
+export function createSettingsButton(): boolean {
+    if (isCreating) return false;
     isCreating = true;
 
     try {
         const container = getContainer();
-        if (!container) return;
+        if (!container) return false;
 
-        if (container.querySelector(`.${SETTINGS_BUTTON_CLASS}`)) return;
+        if (container.querySelector(`.${SETTINGS_BUTTON_CLASS}`)) return false;
 
         const button = createElement('button', {
             className: `item svelte-6bkz6t ${SETTINGS_BUTTON_CLASS}`,
@@ -75,8 +93,10 @@ export function createSettingsButton(): void {
 
         container.appendChild(button);
         logger.debug('Settings button created');
+        return true;
     } catch (error) {
         logger.error('Failed to create settings button:', error);
+        return false;
     } finally {
         isCreating = false;
     }
@@ -91,47 +111,45 @@ export function removeButtons(): void {
     if (!container) return;
     const btns = container.querySelectorAll(`.${SETTINGS_BUTTON_CLASS}`);
     for (const btn of btns) btn.remove();
-    domCache.delete(CONTAINER_CACHE_KEY);
     logger.debug('Buttons removed');
 }
 
-export function waitForSettingsAndCreateButtons(): void {
-    if (observer) {
-        observer.disconnect();
-        observer = null;
-    }
+// ============================================================
+// OBSERVER SUBSCRIPTION
+// ============================================================
 
-    observer = new MutationObserver(
-        debounce(() => {
-            const container = getContainer();
-            if (container && !container.querySelector(`.${SETTINGS_BUTTON_CLASS}`)) {
-                createSettingsButton();
-            }
-        }, 300)
+/**
+ * Subscribe to the centralized observer. Reacts only when the sidebar header
+ * or the settings container appears/changes. Idempotent and cheap.
+ */
+export function waitForSettingsAndCreateButtons(): void {
+    if (unwatch) return;
+
+    unwatch = watchDOM(
+        () => {
+            createSettingsButton();
+        },
+        [`#${HEADER_ID}`, SETTINGS_CONTAINER_SELECTOR, SETTINGS_CONTAINER_FALLBACK]
     );
 
-    observer.observe(document.body, {
-        childList: true,
-        subtree: true,
-    });
-
-    if (!initialCheckDone) {
-        initialCheckDone = true;
-        setTimeout(() => {
-            const container = getContainer();
-            if (container && !container.querySelector(`.${SETTINGS_BUTTON_CLASS}`)) {
-                createSettingsButton();
-            }
-        }, 300);
-    }
+    // Immediate attempt for already-rendered DOM.
+    createSettingsButton();
 }
 
 export function stopWaitingForSettings(): void {
-    if (observer) {
-        observer.disconnect();
-        observer = null;
+    if (unwatch) {
+        unwatch();
+        unwatch = null;
     }
-    domCache.delete(CONTAINER_CACHE_KEY);
-    initialCheckDone = false;
     logger.debug('Stopped waiting for settings container');
+}
+
+// ============================================================
+// CLEANUP
+// ============================================================
+
+if (typeof window !== 'undefined') {
+    window.addEventListener('beforeunload', () => {
+        stopWaitingForSettings();
+    });
 }

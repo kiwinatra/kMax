@@ -1,20 +1,22 @@
-// src/features/addCrown/index.ts
+/*
+* @author: potemk.in
+* @brief: Highlights beta tester names with a golden style and 👑 emoji.
+* @desc: Pure apply-based feature. No local observer or timers — the central registry triggers apply() only when matching nodes (span.text / .text.svelte-1riu5uh) appear in the DOM batch. Uses dataset flag to stay idempotent, and a small cache for beta-tester name lookups.
+*/
 
 import { logger } from '../../core/logger';
 import { storage } from '../../core/storage';
-import { watchDOM } from '../../core/observer';
 import { qsa } from '../../core/dom';
-import { throttle, isTabVisible } from '../../core/performance';
 import { OFFSETS } from '../../offsets';
 
-const DEBOUNCE_DELAY = 500;
+// ============================================================
+// CONSTANTS
+// ============================================================
+
 const CROWN_EMOJI = '👑';
 const GOLD_COLOR = '#ffd700';
 const GOLD_SHADOW = '0 0 20px rgba(255, 215, 0, 0.4)';
-
-let isEnabled = false;
-let unwatch: (() => void) | null = null;
-let processTimeout: number | null = null;
+const MAX_BETA_CACHE = 200;
 
 const NAME_SELECTORS = [
     OFFSETS.classes.name,
@@ -22,21 +24,40 @@ const NAME_SELECTORS = [
     '.text.svelte-1riu5uh',
 ];
 
-// ===== ОПТИМИЗИРОВАННАЯ ПРОВЕРКА БЕТА-ТЕСТЕРА (кеширование) =====
+// ============================================================
+// STATE
+// ============================================================
+
+let isEnabled = false;
+
+/** Cached lookups: trimmed lowercase name → is beta tester. */
 const betaCache = new Map<string, boolean>();
+
+// ============================================================
+// BETA TESTER MATCHING
+// ============================================================
 
 function isBetaTester(name: string): boolean {
     if (!name) return false;
     const trimmed = name.trim().toLowerCase();
-    if (betaCache.has(trimmed)) return betaCache.get(trimmed)!;
-    
-    const result = OFFSETS.betaTesters.some(tester => {
+    if (!trimmed) return false;
+
+    const cached = betaCache.get(trimmed);
+    if (cached !== undefined) return cached;
+
+    const result = OFFSETS.betaTesters.some((tester) => {
         const t = tester.trim().toLowerCase();
         return trimmed === t || trimmed.includes(t) || t.includes(trimmed);
     });
+
+    if (betaCache.size >= MAX_BETA_CACHE) betaCache.clear();
     betaCache.set(trimmed, result);
     return result;
 }
+
+// ============================================================
+// DOM PROCESSING
+// ============================================================
 
 function findNameElements(): Element[] {
     for (const selector of NAME_SELECTORS) {
@@ -46,48 +67,68 @@ function findNameElements(): Element[] {
     return [];
 }
 
-// ===== ОПТИМИЗИРОВАННАЯ ОБРАБОТКА (только видимые элементы) =====
-function processPage(): void {
-    if (!isEnabled || !isTabVisible()) return;
-    
-    const enabled = storage.getBoolean('showCrown');
-    if (!enabled) return;
+function applyCrownToElement(element: HTMLElement): boolean {
+    if (element.dataset.kmodCrown === 'true') return false;
 
-    const nameElements = findNameElements();
-    if (nameElements.length === 0) return;
+    const name = element.textContent?.trim() || '';
+    if (!name || !isBetaTester(name)) return false;
+
+    element.dataset.kmodCrown = 'true';
+    element.style.color = GOLD_COLOR;
+    element.style.fontWeight = '700';
+    element.style.textShadow = GOLD_SHADOW;
+
+    if (!element.textContent?.includes(CROWN_EMOJI)) {
+        element.textContent += ` ${CROWN_EMOJI}`;
+    }
+    return true;
+}
+
+function processPage(): void {
+    if (!isEnabled) return;
+    if (!storage.getBoolean('showCrown')) return;
+
+    const elements = findNameElements();
+    if (elements.length === 0) return;
 
     let processed = 0;
-    for (const el of nameElements) {
-        const element = el as HTMLElement;
-        if (element.dataset.kmodCrown === 'true') continue;
-        
-        const name = element.textContent?.trim() || '';
-        if (!name || !isBetaTester(name)) continue;
-        
-        element.dataset.kmodCrown = 'true';
-        element.style.color = GOLD_COLOR;
-        element.style.fontWeight = '700';
-        element.style.textShadow = GOLD_SHADOW;
-        if (!element.textContent?.includes(CROWN_EMOJI)) {
-            element.textContent += ` ${CROWN_EMOJI}`;
-        }
-        processed++;
+    for (const el of elements) {
+        if (applyCrownToElement(el as HTMLElement)) processed++;
     }
-    
-    if (processed > 0) logger.debug(`👑 Applied ${processed} crowns`);
+
+    if (processed > 0) {
+        logger.debug(`👑 Applied ${processed} crowns`);
+    }
 }
 
-// ===== THROTTLED ВЕРСИЯ (не чаще 1 раза в 500ms) =====
-const throttledProcess = throttle(processPage, 500);
+function removeAllCrowns(): void {
+    const elements = findNameElements();
+    let removed = 0;
+    for (const el of elements) {
+        const e = el as HTMLElement;
+        if (e.dataset.kmodCrown !== 'true') continue;
 
-function debouncedProcess(): void {
-    if (processTimeout) clearTimeout(processTimeout);
-    processTimeout = window.setTimeout(() => {
-        processTimeout = null;
-        throttledProcess();
-    }, 200);
+        e.style.color = '';
+        e.style.fontWeight = '';
+        e.style.textShadow = '';
+        if (e.textContent) {
+            e.textContent = e.textContent
+                .replace(` ${CROWN_EMOJI}`, '')
+                .replace(CROWN_EMOJI, '');
+        }
+        delete e.dataset.kmodCrown;
+        removed++;
+    }
+    if (removed > 0) {
+        logger.debug(`👑 Removed ${removed} crowns`);
+    }
 }
 
+// ============================================================
+// PUBLIC API
+// ============================================================
+
+/** Full scan (idempotent). Called by registry on init, on toggles, and on DOM batches. */
 export function apply(): void {
     processPage();
 }
@@ -97,34 +138,24 @@ export function enable(): void {
     isEnabled = true;
     logger.info('👑 Crown enabled');
     processPage();
-    if (!unwatch) {
-        unwatch = watchDOM(() => debouncedProcess());
-    }
 }
 
 export function disable(): void {
     if (!isEnabled) return;
     isEnabled = false;
-    if (unwatch) { unwatch(); unwatch = null; }
-    if (processTimeout) { clearTimeout(processTimeout); processTimeout = null; }
-    // Удаляем короны
-    const elements = findNameElements();
-    for (const el of elements) {
-        const e = el as HTMLElement;
-        e.style.color = '';
-        e.style.fontWeight = '';
-        e.style.textShadow = '';
-        if (e.textContent) e.textContent = e.textContent.replace(` ${CROWN_EMOJI}`, '').replace(CROWN_EMOJI, '');
-        delete e.dataset.kmodCrown;
-    }
+    removeAllCrowns();
     betaCache.clear();
     logger.info('👑 Crown disabled');
 }
 
 export function toggle(): boolean {
-    const current = storage.getBoolean('showCrown');
-    const newState = !current;
+    const newState = !storage.getBoolean('showCrown');
     storage.setBoolean('showCrown', newState);
-    if (newState) enable(); else disable();
+    if (newState) enable();
+    else disable();
     return newState;
+}
+
+export function isFeatureEnabled(): boolean {
+    return isEnabled;
 }

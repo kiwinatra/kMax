@@ -1,264 +1,249 @@
-// src/features/replaceMax/index.ts
+/*
+* @author: potemk.in
+* @brief: Replaces "Max" → "MAX" in visible text (excluding "kMax").
+* @desc: Batch-aware feature. When the registry passes an ObserverBatch, only characterData nodes and text descendants of added nodes are processed. On enable or manual apply() without a batch, falls back to a full TreeWalker scan. Originals are tracked in a Map so disable() can restore them. Detached nodes are pruned periodically to avoid leaks. No local observer, no timers.
+*
+* NOTE: This feature requires the registry to pass the ObserverBatch to apply().
+*       See registry.ts — applyOnMutations(batch) should call feature.apply(batch).
+*/
 
 import { logger } from '../../core/logger';
 import { storage } from '../../core/storage';
-import { watchDOM } from '../../core/observer';
-import { OFFSETS } from '../../offsets';
+import { ObserverBatch } from '../../core/observer';
 
 // ============================================================
-// КОНСТАНТЫ
+// CONSTANTS
 // ============================================================
 
-const DEBOUNCE_DELAY = 500; // ms (чуть больше, т.к. работа с текстом тяжёлая)
-const MIN_INTERVAL = 2000; // защита от частых вызовов
-const MAX_TEXT_LENGTH = 10000; // ограничение на размер текста
+const MAX_TEXT_LENGTH = 10000;
+const MAX_ORIGINALS = 5000;
+const PRUNE_THRESHOLD = 1000;
+
+const REPLACE_REGEX = /(?<!k)Max/g;
 
 // ============================================================
-// СОСТОЯНИЕ
+// STATE
 // ============================================================
 
 let isEnabled = false;
-let unwatch: (() => void) | null = null;
-let debounceTimer: number | null = null;
-let lastRun = 0;
-let originalTexts: Map<Text, string> = new Map(); // храним оригинальные тексты
+
+/** Original text content for every node we've modified. */
+const originalTexts = new Map<Text, string>();
 
 // ============================================================
-// ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+// CORE TRANSFORM
 // ============================================================
 
-/**
- * Проверка, нужно ли заменять текст
- */
-function shouldReplace(text: string): boolean {
-    return text.includes('Max') && !text.includes('kMax') && text.length <= MAX_TEXT_LENGTH;
+function shouldProcess(text: string): boolean {
+    return (
+        text.length > 0 &&
+        text.length <= MAX_TEXT_LENGTH &&
+        text.includes('Max') &&
+        !text.includes('kMax')
+    );
 }
 
-/**
- * Замена Max → MAX (с сохранением оригинала)
- */
-function replaceTextNode(textNode: Text): void {
-    const original = textNode.textContent || '';
-    
-    // Если уже заменяли — пропускаем
-    if (originalTexts.has(textNode)) return;
-    
-    // Проверяем, нужно ли заменять
-    if (!shouldReplace(original)) return;
-    
-    // Сохраняем оригинал
-    originalTexts.set(textNode, original);
-    
-    // Заменяем
-    const updated = original.replace(/(?<!k)Max/g, 'MAX');
-    textNode.textContent = updated;
-}
+function processTextNode(node: Text): boolean {
+    const text = node.textContent || '';
 
-/**
- * Восстановление оригинального текста
- */
-function restoreTextNode(textNode: Text): void {
-    if (!originalTexts.has(textNode)) return;
-    
-    const original = originalTexts.get(textNode)!;
-    if (textNode.textContent !== original) {
-        textNode.textContent = original;
+    // Already transformed — skip (content matches our output)
+    const prevOriginal = originalTexts.get(node);
+    if (prevOriginal !== undefined && text === prevOriginal.replace(REPLACE_REGEX, 'MAX')) {
+        return false;
     }
-    originalTexts.delete(textNode);
+
+    if (!shouldProcess(text)) {
+        if (prevOriginal !== undefined) originalTexts.delete(node);
+        return false;
+    }
+
+    originalTexts.set(node, text);
+    node.textContent = text.replace(REPLACE_REGEX, 'MAX');
+    return true;
 }
 
-/**
- * Основная обработка страницы
- */
-function processPage(): void {
-    // Защита от слишком частых вызовов
-    const now = Date.now();
-    if (now - lastRun < MIN_INTERVAL) {
-        return;
+function restoreNode(node: Text, original: string): boolean {
+    if (node.textContent !== original) {
+        node.textContent = original;
+        return true;
     }
-    lastRun = now;
+    return false;
+}
 
-    const enabled = storage.getBoolean('replaceMax');
-    
-    // Создаём TreeWalker для текстовых узлов
-    const walker = document.createTreeWalker(
-        document.body,
-        NodeFilter.SHOW_TEXT,
-        {
-            acceptNode: function(node) {
-                const parent = node.parentElement;
-                if (!parent) return NodeFilter.FILTER_REJECT;
-                
-                const tag = parent.tagName;
-                // Пропускаем скрипты и стили
-                if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT') {
-                    return NodeFilter.FILTER_REJECT;
-                }
-                
-                const text = node.textContent || '';
-                if (enabled) {
-                    // Если включено — ищем текст для замены
-                    if (text.includes('Max') && !text.includes('kMax')) {
-                        return NodeFilter.FILTER_ACCEPT;
-                    }
-                } else {
-                    // Если выключено — ищем тексты, которые мы меняли
-                    if (originalTexts.has(node as Text)) {
-                        return NodeFilter.FILTER_ACCEPT;
-                    }
-                }
-                
+// ============================================================
+// BATCH PROCESSING
+// ============================================================
+
+/** Walk text descendants of an element and process each. */
+function processElementText(element: Element): number {
+    let count = 0;
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, {
+        acceptNode(node) {
+            const parent = node.parentElement;
+            if (!parent) return NodeFilter.FILTER_REJECT;
+            const tag = parent.tagName;
+            if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT') {
                 return NodeFilter.FILTER_REJECT;
             }
-        }
-    );
+            return NodeFilter.FILTER_ACCEPT;
+        },
+    });
 
-    const nodesToProcess: Text[] = [];
     let node: Text | null;
-    
     while ((node = walker.nextNode() as Text | null)) {
-        nodesToProcess.push(node);
+        if (processTextNode(node)) count++;
     }
+    return count;
+}
+
+function processBatch(batch: ObserverBatch): void {
+    let processed = 0;
+
+    // 1. Direct text mutations
+    for (const node of batch.characterDataNodes) {
+        if (node.nodeType === Node.TEXT_NODE) {
+            if (processTextNode(node as Text)) processed++;
+        }
+    }
+
+    // 2. Text inside newly added nodes
+    for (const node of batch.addedNodes) {
+        if (node.nodeType === Node.ELEMENT_NODE) {
+            processed += processElementText(node as Element);
+        } else if (node.nodeType === Node.TEXT_NODE) {
+            if (processTextNode(node as Text)) processed++;
+        }
+    }
+
+    if (processed > 0) {
+        logger.debug(`🔄 Replaced "Max" → "MAX" in ${processed} text node(s) [batch]`);
+    }
+}
+
+// ============================================================
+// FULL SCAN
+// ============================================================
+
+function fullScan(): void {
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+        acceptNode(node) {
+            const parent = node.parentElement;
+            if (!parent) return NodeFilter.FILTER_REJECT;
+            const tag = parent.tagName;
+            if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT') {
+                return NodeFilter.FILTER_REJECT;
+            }
+            return NodeFilter.FILTER_ACCEPT;
+        },
+    });
 
     let processed = 0;
-    if (enabled) {
-        // Замена
-        for (const textNode of nodesToProcess) {
-            replaceTextNode(textNode);
-            processed++;
-        }
-        if (processed > 0) {
-            logger.debug(`🔄 Replaced "Max" → "MAX" in ${processed} text nodes`);
-        }
-    } else {
-        // Восстановление
-        for (const textNode of nodesToProcess) {
-            restoreTextNode(textNode);
-            processed++;
-        }
-        if (processed > 0) {
-            logger.debug(`🔄 Restored ${processed} text nodes`);
-        }
+    let node: Text | null;
+    while ((node = walker.nextNode() as Text | null)) {
+        if (processTextNode(node)) processed++;
+    }
+
+    if (processed > 0) {
+        logger.debug(`🔄 Replaced "Max" → "MAX" in ${processed} text node(s) [full scan]`);
     }
 }
 
-/**
- * Debounced версия processPage
- */
-function debouncedProcess(): void {
-    if (debounceTimer) {
-        clearTimeout(debounceTimer);
-    }
-    debounceTimer = window.setTimeout(() => {
-        debounceTimer = null;
-        processPage();
-    }, DEBOUNCE_DELAY);
-}
+// ============================================================
+// RESTORE / PRUNE
+// ============================================================
 
-/**
- * Полная очистка всех замен (принудительно)
- */
 function restoreAll(): void {
     if (originalTexts.size === 0) return;
-    
-    let count = 0;
-    for (const [textNode, original] of originalTexts) {
-        if (textNode.textContent !== original) {
-            textNode.textContent = original;
-            count++;
-        }
+
+    let restored = 0;
+    for (const [node, original] of originalTexts) {
+        if (!document.contains(node)) continue;
+        if (restoreNode(node, original)) restored++;
     }
     originalTexts.clear();
-    
-    if (count > 0) {
-        logger.debug(`🔄 Restored ${count} text nodes (full cleanup)`);
+
+    if (restored > 0) {
+        logger.debug(`🔄 Restored ${restored} text node(s)`);
+    }
+}
+
+/** Remove entries for nodes that are no longer in the DOM. */
+function pruneDetached(): void {
+    if (originalTexts.size < PRUNE_THRESHOLD) return;
+
+    let pruned = 0;
+    for (const [node] of originalTexts) {
+        if (!document.contains(node)) {
+            originalTexts.delete(node);
+            pruned++;
+        }
+    }
+
+    // Hard cap
+    if (originalTexts.size > MAX_ORIGINALS) {
+        const excess = originalTexts.size - MAX_ORIGINALS;
+        let i = 0;
+        for (const key of originalTexts.keys()) {
+            if (i++ >= excess) break;
+            originalTexts.delete(key);
+        }
+    }
+
+    if (pruned > 0) {
+        logger.debug(`🧹 Pruned ${pruned} detached text nodes`);
     }
 }
 
 // ============================================================
-// ПУБЛИЧНЫЙ API
+// PUBLIC API
 // ============================================================
 
 /**
- * Применение текущего состояния
+ * If a batch is provided, only process changed/added nodes.
+ * Otherwise, fall back to a full scan (used on enable / applyFeature).
  */
-export function apply(): void {
-    processPage();
+export function apply(batch?: ObserverBatch): void {
+    if (!storage.getBoolean('replaceMax')) {
+        restoreAll();
+        return;
+    }
+
+    if (batch) {
+        processBatch(batch);
+        pruneDetached();
+    } else {
+        fullScan();
+    }
 }
 
-/**
- * Включение функции
- */
 export function enable(): void {
     if (isEnabled) return;
     isEnabled = true;
-
     logger.info('🔄 Replace "Max" → "MAX" enabled');
-    processPage();
-
-    // Подписка на изменения DOM
-    if (!unwatch) {
-        unwatch = watchDOM(() => {
-            debouncedProcess();
-        });
-    }
+    fullScan();
 }
 
-/**
- * Отключение функции
- */
 export function disable(): void {
     if (!isEnabled) return;
     isEnabled = false;
-
-    // Отписываемся от DOM
-    if (unwatch) {
-        unwatch();
-        unwatch = null;
-    }
-
-    // Очищаем таймер
-    if (debounceTimer) {
-        clearTimeout(debounceTimer);
-        debounceTimer = null;
-    }
-
-    // Восстанавливаем все тексты
     restoreAll();
-
     logger.info('🔄 Replace "Max" → "MAX" disabled');
 }
 
-/**
- * Переключение состояния
- */
 export function toggle(): boolean {
-    const current = storage.getBoolean('replaceMax');
-    const newState = !current;
+    const newState = !storage.getBoolean('replaceMax');
     storage.setBoolean('replaceMax', newState);
-
-    if (newState) {
-        enable();
-    } else {
-        disable();
-    }
-
+    if (newState) enable();
+    else disable();
     return newState;
 }
 
-// ============================================================
-// ОЧИСТКА ПРИ ВЫГРУЗКЕ
-// ============================================================
+export function isFeatureEnabled(): boolean {
+    return isEnabled;
+}
 
-window.addEventListener('beforeunload', () => {
-    if (unwatch) {
-        unwatch();
-        unwatch = null;
-    }
-    if (debounceTimer) {
-        clearTimeout(debounceTimer);
-        debounceTimer = null;
-    }
-    // Восстанавливаем всё при закрытии
-    restoreAll();
-});
+if (typeof window !== 'undefined') {
+    window.addEventListener('beforeunload', () => {
+        originalTexts.clear();
+    });
+}

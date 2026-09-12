@@ -1,30 +1,36 @@
-// src/features/hidePhone/index.ts
+/*
+* @author: potemk.in
+* @brief: Hides the user's phone number in the profile.
+* @desc: Pure apply-based feature. Registry triggers apply() when `.phone` nodes appear in the DOM batch. Idempotent — toggling display is a no-op if state already matches storage flag. No local observer, no timers.
+*/
 
 import { logger } from '../../core/logger';
 import { storage } from '../../core/storage';
-import { watchDOM } from '../../core/observer';
 import { qsa } from '../../core/dom';
 
-const DEBOUNCE_DELAY = 300;
+// ============================================================
+// CONSTANTS
+// ============================================================
+
 const PHONE_SELECTOR = '.phone.svelte-6bkz6t';
+const FALLBACK_SELECTOR = '.phone';
+
+// ============================================================
+// STATE
+// ============================================================
 
 let isEnabled = false;
-let unwatch: (() => void) | null = null;
-let debounceTimer: number | null = null;
-let cachedElements: HTMLElement[] = [];
+
+// ============================================================
+// DOM PROCESSING
+// ============================================================
 
 function getPhoneElements(): HTMLElement[] {
-    if (cachedElements.length > 0 && cachedElements.some(el => document.contains(el))) {
-        return cachedElements;
+    let elements = qsa<HTMLElement>(PHONE_SELECTOR);
+    if (elements.length === 0) {
+        elements = qsa<HTMLElement>(FALLBACK_SELECTOR);
     }
-    cachedElements = qsa<HTMLElement>(PHONE_SELECTOR);
-    
-    // Fallback: если не нашли, пробуем без хэша
-    if (cachedElements.length === 0) {
-        cachedElements = qsa<HTMLElement>('.phone');
-    }
-    
-    return cachedElements;
+    return elements;
 }
 
 function hideAll(): void {
@@ -53,87 +59,43 @@ function showAll(): void {
     if (count > 0) {
         logger.debug(`📱 Shown ${count} phone element(s)`);
     }
-    cachedElements = [];
 }
 
-function processPage(): void {
-    const enabled = storage.getBoolean('hidePhone');
-    if (enabled) {
+// ============================================================
+// PUBLIC API
+// ============================================================
+
+/** Idempotent — syncs display state with current storage flag. */
+export function apply(): void {
+    if (storage.getBoolean('hidePhone')) {
         hideAll();
     } else {
         showAll();
     }
 }
 
-function debouncedProcess(): void {
-    if (debounceTimer) {
-        clearTimeout(debounceTimer);
-    }
-    debounceTimer = window.setTimeout(() => {
-        debounceTimer = null;
-        processPage();
-    }, DEBOUNCE_DELAY);
-}
-
-export function apply(): void {
-    processPage();
-}
-
 export function enable(): void {
     if (isEnabled) return;
     isEnabled = true;
-
     logger.info('📱 Phone hide enabled');
-    processPage();
-
-    if (!unwatch) {
-        unwatch = watchDOM(() => {
-            debouncedProcess();
-        });
-    }
+    hideAll();
 }
 
 export function disable(): void {
     if (!isEnabled) return;
     isEnabled = false;
-
-    if (unwatch) {
-        unwatch();
-        unwatch = null;
-    }
-
-    if (debounceTimer) {
-        clearTimeout(debounceTimer);
-        debounceTimer = null;
-    }
-
     showAll();
-    cachedElements = [];
-
     logger.info('📱 Phone hide disabled');
 }
 
 export function toggle(): boolean {
-    const current = storage.getBoolean('hidePhone');
-    const newState = !current;
+    const newState = !storage.getBoolean('hidePhone');
     storage.setBoolean('hidePhone', newState);
-
-    if (newState) {
-        enable();
-    } else {
-        disable();
-    }
-
+    if (newState) enable();
+    else disable();
     return newState;
 }
 
-window.addEventListener('beforeunload', () => {
-    if (unwatch) {
-        unwatch();
-        unwatch = null;
-    }
-    if (debounceTimer) {
-        clearTimeout(debounceTimer);
-        debounceTimer = null;
-    }
-});
+export function isFeatureEnabled(): boolean {
+    return isEnabled;
+}

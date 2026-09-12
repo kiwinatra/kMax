@@ -1,143 +1,149 @@
-// src/locales/en.ts
+/*
+* @author: potemk.in
+* @brief: English locale dictionary.
+* @desc: Fully typed against Locale. Contains every key used by the UI.
+*       All font labels are in English (not a mix of ru/en like before).
+*/
 
-export const en = {
-  // ===== HEADERS =====
-  settingsTitle: 'kMax Mod Settings',
-  settingsSubtitle: 'Manage additional features',
+import type { Locale } from '../types';
 
-  // ===== SECTIONS (sidebar) =====
-  sectionGeneral: 'General',
-  sectionSecurity: 'Security',
-  sectionAppearance: 'Appearance',
-  sectionMedia: 'Media',
-  sectionOther: 'Other',
-  sectionLanguage: 'Language',
-  sectionAbout: 'About',
+export const en: Locale = {
+    // ===== HEADERS =====
+    settingsTitle: 'kMax Mod Settings',
+    settingsSubtitle: 'Manage additional features',
 
-  // ===== SECTION DESCRIPTIONS =====
-  sectionGeneralDesc: 'Interface and display settings',
-  sectionSecurityDesc: 'Privacy and confidentiality protection',
-  sectionAppearanceDesc: 'Visual style customization',
-  sectionMediaDesc: 'Photo and content settings',
-  sectionOtherDesc: 'Additional features',
-  sectionLanguageDesc: 'Select interface language',
-  sectionAboutDesc: 'Version and developer information',
+    // ===== SECTIONS =====
+    sectionGeneral: 'General',
+    sectionSecurity: 'Security',
+    sectionAppearance: 'Appearance',
+    sectionMedia: 'Media',
+    sectionOther: 'Other',
+    sectionLanguage: 'Language',
+    sectionAbout: 'About',
+    sectionChats: 'Chats',
 
-  // ===== FEATURES - GENERAL =====
-  hideStoriesLabel: 'Hide stories',
-  hideStoriesDesc: 'Hides the stories block in the feed',
+    // ===== SECTION DESCRIPTIONS =====
+    sectionGeneralDesc: 'Interface and display settings',
+    sectionSecurityDesc: 'Privacy and confidentiality protection',
+    sectionAppearanceDesc: 'Visual style customization',
+    sectionMediaDesc: 'Photo and content settings',
+    sectionOtherDesc: 'Additional features',
+    sectionLanguageDesc: 'Select interface language',
+    sectionAboutDesc: 'Version and developer information',
+    sectionChatsDesc: 'Manage tags and templates for chats',
 
-  hideSferumLabel: 'Hide Sferum button',
-  hideSferumDesc: 'Removes the "Sign in to Sferum" button from the interface',
+    // ===== GENERAL =====
+    hideStoriesLabel: 'Hide stories',
+    hideStoriesDesc: 'Hides the stories block in the feed',
 
-  // ===== FEATURES - SECURITY =====
-  blockAnalyticsLabel: 'Block analytics',
-  blockAnalyticsDesc: 'Replaces tracker IDs with fake ones to protect your privacy',
+    hideSferumLabel: 'Hide Sferum button',
+    hideSferumDesc: 'Removes the "Sign in to Sferum" button from the interface',
 
-  hidePhoneLabel: 'Hide phone number',
-  hidePhoneDesc: 'Hides your phone number in your profile',
+    // ===== SECURITY =====
+    blockAnalyticsLabel: 'Block analytics',
+    blockAnalyticsDesc: 'Replaces tracker IDs with fake ones to protect your privacy',
 
-  // ===== FEATURES - APPEARANCE =====
-  showCrownLabel: 'Beta Tester crown',
-  showCrownDesc: 'Highlights beta tester names with gold color and adds 👑',
+    hidePhoneLabel: 'Hide phone number',
+    hidePhoneDesc: 'Hides your phone number in your profile',
 
-  replaceTitleLabel: 'kMax in title',
-  replaceTitleDesc: 'Adds "kMax | " prefix to the page title',
+    // ===== APPEARANCE =====
+    showCrownLabel: 'Beta Tester crown',
+    showCrownDesc: 'Highlights beta tester names with gold color and adds 👑',
 
-  fontFamilyLabel: 'Font Family',
-fontFamilyDesc: 'Select font for the whole site',
-// ru.ts — добавляем названия для всех шрифтов
-fontFamilySystemUI: 'Системный',
-fontFamilyArial: 'Arial',
-fontFamilyArialBlack: 'Arial Black',
-fontFamilyGeorgia: 'Georgia',
-fontFamilyTimesNewRoman: 'Times New Roman',
-fontFamilyCourierNew: 'Courier New',
-fontFamilyVerdana: 'Verdana',
-fontFamilyTahoma: 'Tahoma',
-fontFamilyTrebuchetMS: 'Trebuchet MS',
-fontFamilyImpact: 'Impact',
-fontFamilyComicSansMS: 'Comic Sans MS',
-fontFamilyLucidaSans: 'Lucida Sans',
-fontFamilyGeneva: 'Geneva',
-fontFamilyPalatino: 'Palatino',
-fontFamilyBookman: 'Bookman',
-fontFamilyGaramond: 'Garamond',
-fontFamilyHelvetica: 'Helvetica',
-fontFamilyFranklinGothic: 'Franklin Gothic',
-fontFamilyCenturyGothic: 'Century Gothic',
-fontFamilyCopperplate: 'Copperplate',
-fontFamilyBaskerville: 'Baskerville',
-// Google Fonts
-fontFamilyInter: 'Inter',
-fontFamilyRoboto: 'Roboto',
-fontFamilyOpenSans: 'Open Sans',
-fontFamilyMontserrat: 'Montserrat',
-fontFamilyOswald: 'Oswald',
-fontFamilyRaleway: 'Raleway',
-fontFamilyLato: 'Lato',
-fontFamilyPlayfairDisplay: 'Playfair Display',
-fontFamilyMerriweather: 'Merriweather',
-fontFamilyUbuntu: 'Ubuntu',
-fontFamilyNunito: 'Nunito',
-fontFamilyPoppins: 'Poppins',
-fontFamilyQuicksand: 'Quicksand',
-fontFamilyFiraSans: 'Fira Sans',
-fontFamilySourceSansPro: 'Source Sans Pro',
-fontFamilyPTSans: 'PT Sans',
-fontFamilyIBMPlexSans: 'IBM Plex Sans',
-fontFamilyManrope: 'Manrope',
-fontFamilyJetBrainsMono: 'JetBrains Mono',
-fontFamilyCaveat: 'Caveat',
-fontFamilyMarckScript: 'Marck Script',
+    replaceTitleLabel: 'kMax in title',
+    replaceTitleDesc: 'Adds "kMax | " prefix to the page title',
 
-  // ===== FEATURES - MEDIA =====
-  showMetadataLabel: 'Photo Metadata',
-  showMetadataDesc: 'Adds a button with photo information: size, format, and upload date',
+    fontFamilyLabel: 'Font Family',
+    fontFamilyDesc: 'Select font for the whole site',
 
-  // ===== FEATURES - OTHER =====
-  replaceMaxLabel: 'Replace Max → MAX',
-  replaceMaxDesc: 'Replaces all "Max" mentions with "MAX" on the page',
+    // ===== MEDIA =====
+    showMetadataLabel: 'Photo Metadata',
+    showMetadataDesc: 'Adds a button with photo information: size, format, and upload date',
 
-  logViewLabel: '📡 Log Everything',
-  logViewDesc: 'Shows all logs, events, requests and errors in real time',
+    // ===== OTHER =====
+    replaceMaxLabel: 'Replace Max → MAX',
+    replaceMaxDesc: 'Replaces all "Max" mentions with "MAX" on the page',
 
-  // ===== LANGUAGE =====
-  languageLabel: 'Interface language',
-  languageRu: 'Russian',
-  languageEn: 'English',
+    logViewLabel: '📡 Log Everything',
+    logViewDesc: 'Shows all logs, events, requests and errors in real time',
 
-  // ===== ABOUT =====
-  aboutName: 'kMax Mod',
-  aboutVersion: 'Version',
-  aboutAuthor: 'Author',
-  aboutDescription: 'Mod for max.ru with additional features for convenience and customization.',
+    // ===== CHATS =====
+    chatTagsLabel: 'Chat Tags',
+    chatTagsDesc: 'Add colored tags to chats for easy organization',
 
-  // ===== BUTTONS =====
-  saveButton: 'Save',
-  resetButton: 'Reset All',
-  resetConfirm: 'Are you sure you want to reset all settings?',
-  closeButton: 'Close',
+    templatesLabel: 'Reply Templates',
+    templatesDesc: 'Quick replies via /command in the input field',
 
-  // ===== STATUS =====
-  statusActive: 'Active',
-  statusEnabled: 'On',
-  statusDisabled: 'Off',
+    // ===== LANGUAGE =====
+    languageLabel: 'Interface language',
+    languageRu: 'Русский',
+    languageEn: 'English',
 
-  // ===== GENERAL UI =====
-  toggleOn: 'On',
-  toggleOff: 'Off',
-  backToSettings: '← Back to settings',
+    // ===== ABOUT =====
+    aboutName: 'kMax Mod',
+    aboutVersion: 'Version',
+    aboutAuthor: 'Author',
+    aboutDescription: 'Mod for max.ru with additional features for convenience and customization.',
 
-  // ===== ADDITIONAL (if used) =====
-  // В случае, если понадобится:
-  // welcome: 'Welcome, {name}!',
+    // ===== BUTTONS =====
+    saveButton: 'Save',
+    resetButton: 'Reset All',
+    resetConfirm: 'Are you sure you want to reset all settings?',
+    closeButton: 'Close',
 
-  sectionChats: 'Chats',
-sectionChatsDesc: 'Manage tags for chats',
-chatTagsLabel: 'Chat Tags',
-chatTagsDesc: 'Add colored tags to chats for easy organization',
+    // ===== STATUSES =====
+    statusActive: 'Active',
+    statusEnabled: 'On',
+    statusDisabled: 'Off',
 
-templatesLabel: 'Reply Templates',
-templatesDesc: 'Quick replies via /command in the input field',
+    // ===== UI =====
+    toggleOn: 'On',
+    toggleOff: 'Off',
+    backToSettings: '← Back to settings',
+
+    // ===== FONT LABELS (SYSTEM) =====
+    fontFamilySystemUI: 'System UI',
+    fontFamilyArial: 'Arial',
+    fontFamilyArialBlack: 'Arial Black',
+    fontFamilyGeorgia: 'Georgia',
+    fontFamilyTimesNewRoman: 'Times New Roman',
+    fontFamilyCourierNew: 'Courier New',
+    fontFamilyVerdana: 'Verdana',
+    fontFamilyTahoma: 'Tahoma',
+    fontFamilyTrebuchetMS: 'Trebuchet MS',
+    fontFamilyImpact: 'Impact',
+    fontFamilyComicSansMS: 'Comic Sans MS',
+    fontFamilyLucidaSans: 'Lucida Sans',
+    fontFamilyGeneva: 'Geneva',
+    fontFamilyPalatino: 'Palatino',
+    fontFamilyBookman: 'Bookman',
+    fontFamilyGaramond: 'Garamond',
+    fontFamilyHelvetica: 'Helvetica',
+    fontFamilyFranklinGothic: 'Franklin Gothic',
+    fontFamilyCenturyGothic: 'Century Gothic',
+    fontFamilyCopperplate: 'Copperplate',
+    fontFamilyBaskerville: 'Baskerville',
+
+    // ===== FONT LABELS (GOOGLE) =====
+    fontFamilyInter: 'Inter',
+    fontFamilyRoboto: 'Roboto',
+    fontFamilyOpenSans: 'Open Sans',
+    fontFamilyMontserrat: 'Montserrat',
+    fontFamilyOswald: 'Oswald',
+    fontFamilyRaleway: 'Raleway',
+    fontFamilyLato: 'Lato',
+    fontFamilyPlayfairDisplay: 'Playfair Display',
+    fontFamilyMerriweather: 'Merriweather',
+    fontFamilyUbuntu: 'Ubuntu',
+    fontFamilyNunito: 'Nunito',
+    fontFamilyPoppins: 'Poppins',
+    fontFamilyQuicksand: 'Quicksand',
+    fontFamilyFiraSans: 'Fira Sans',
+    fontFamilySourceSansPro: 'Source Sans Pro',
+    fontFamilyPTSans: 'PT Sans',
+    fontFamilyIBMPlexSans: 'IBM Plex Sans',
+    fontFamilyManrope: 'Manrope',
+    fontFamilyJetBrainsMono: 'JetBrains Mono',
+    fontFamilyCaveat: 'Caveat',
+    fontFamilyMarckScript: 'Marck Script',
 };

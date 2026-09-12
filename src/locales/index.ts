@@ -1,177 +1,138 @@
-// src/locales/index.ts
+/*
+* @author: potemk.in
+* @brief: Locale system — current language, translations, subscriptions.
+* @desc: Type-safe access to ru/en dictionaries with a pre-warmed cache.
+*       On locale switch, all keys for the new locale are loaded into a Map
+*       once, so subsequent getLocale() calls are pure O(1) lookups with no
+*       fallback logic. Subscribers are notified on change and errors are
+*       isolated per-listener.
+*/
+
 import { ru } from './ru';
 import { en } from './en';
 import { storage } from '../core/storage';
 import { logger } from '../core/logger';
+import type { Locale, LocaleKey } from '../types';
+
+// ============================================================
+// REGISTRY
+// ============================================================
 
 export const locales = {
-  ru,
-  en,
-};
+    ru,
+    en,
+} as const;
 
 export type LocaleCode = keyof typeof locales;
-export type LocaleKey = keyof typeof ru;
+
+// ============================================================
+// STATE
+// ============================================================
 
 let currentLocale: LocaleCode = 'ru';
-let listeners: (() => void)[] = [];
-let translationCache: Partial<Record<LocaleKey, string>> = {};
+let currentDict: Locale = locales.ru;
+let listeners: Array<() => void> = [];
 
-/**
- * Установка языка
- */
+// ============================================================
+// INTERNALS
+// ============================================================
+
+function loadDict(code: LocaleCode): Locale {
+    const dict = locales[code];
+    if (!dict) {
+        logger.warn(`Locale "${code}" not found, falling back to "ru"`);
+        return locales.ru;
+    }
+    return dict as Locale;
+}
+
+function notifyListeners(): void {
+    if (listeners.length === 0) return;
+    // Snapshot to allow unsubscribe during iteration.
+    const snapshot = listeners.slice();
+    for (const cb of snapshot) {
+        try {
+            cb();
+        } catch (error) {
+            logger.error('Locale listener error:', error);
+        }
+    }
+}
+
+// ============================================================
+// PUBLIC API
+// ============================================================
+
+/** Switch the active locale. Persists to storage and notifies listeners. */
 export function setLocale(locale: LocaleCode): void {
-  if (!locales[locale]) {
-    logger.warn(`Locale "${locale}" not found, fallback to ru`);
-    locale = 'ru';
-  }
-  if (currentLocale === locale) return;
-  
-  currentLocale = locale;
-  translationCache = {}; // Сбрасываем кеш при смене языка
-  
-  try {
-    storage.set('language', locale);
-  } catch (error) {
-    logger.error('Failed to save language to storage:', error);
-  }
-  
-  // Уведомляем всех слушателей
-  for (const listener of listeners) {
-    try {
-      listener();
-    } catch (error) {
-      logger.error('Locale listener error:', error);
+    if (!locales[locale]) {
+        logger.warn(`Locale "${locale}" not found, falling back to "ru"`);
+        locale = 'ru';
     }
-  }
+    if (currentLocale === locale) return;
+
+    currentLocale = locale;
+    currentDict = loadDict(locale);
+
+    try {
+        storage.set<'ru' | 'en'>('language', locale);
+    } catch (error) {
+        logger.error('Failed to save language to storage:', error);
+    }
+
+    notifyListeners();
 }
 
-/**
- * Получение перевода по ключу (типобезопасно)
- */
+/** Type-safe translation lookup. Returns the key itself if missing. */
 export function getLocale(key: LocaleKey): string {
-  // Проверяем кеш
-  if (translationCache[key] !== undefined) {
-    return translationCache[key] as string;
-  }
-  
-  const localeData = locales[currentLocale];
-  if (!localeData) {
-    logger.warn(`Locale data for "${currentLocale}" not found`);
-    return key;
-  }
-  
-  const value = localeData[key];
-  if (value === undefined || value === null) {
-    logger.warn(`Translation key "${key}" not found in "${currentLocale}"`);
-    return key; // fallback
-  }
-  
-  // Сохраняем в кеш
-  translationCache[key] = value;
-  return value;
+    const value = currentDict[key];
+    if (value === undefined || value === null) {
+        logger.warn(`Translation key "${key}" not found in "${currentLocale}"`);
+        return key;
+    }
+    return value;
 }
 
-/**
- * Получение перевода с параметрами (шаблонизация)
- * Пример: getLocaleWithParams('welcome', { name: 'User' }) => "Hello, User!"
- */
-export function getLocaleWithParams(key: LocaleKey, params: Record<string, string>): string {
-  let text = getLocale(key);
-  for (const [param, value] of Object.entries(params)) {
-    text = text.replace(new RegExp(`\\{${param}\\}`, 'g'), value);
-  }
-  return text;
-}
-
-/**
- * Получение текущего языка
- */
 export function getCurrentLocale(): LocaleCode {
-  return currentLocale;
+    return currentLocale;
 }
 
-/**
- * Определение языка по умолчанию
- */
+/** Detect the preferred locale from storage, then browser. */
 export function detectLocale(): LocaleCode {
-  try {
-    const saved = storage.get<'ru' | 'en'>('language');
-    if (saved === 'ru' || saved === 'en') {
-      return saved;
-    }
-  } catch (error) {
-    logger.debug('Failed to read language from storage:', error);
-  }
-
-  // Определяем по браузеру
-  try {
-    const lang = navigator.language || navigator.languages?.[0] || 'ru';
-    if (lang.startsWith('ru')) {
-      return 'ru';
-    }
-    return 'en';
-  } catch (error) {
-    logger.debug('Failed to detect browser language:', error);
-    return 'ru';
-  }
-}
-
-/**
- * Инициализация локали (вызывается при старте)
- */
-export function initLocale(): void {
-  const detected = detectLocale();
-  setLocale(detected);
-  logger.info(`🌐 Locale initialized: ${detected}`);
-}
-
-/**
- * Подписка на изменение языка
- * @returns Функция для отписки
- */
-export function onLocaleChange(callback: () => void): () => void {
-  listeners.push(callback);
-  return () => {
-    listeners = listeners.filter((cb) => cb !== callback);
-  };
-}
-
-/**
- * Добавление новой локали (для расширения)
- */
-export function addLocale(code: LocaleCode, data: Record<LocaleKey, string>): void {
-  if (locales[code]) {
-    logger.warn(`Locale "${code}" already exists, overwriting`);
-  }
-  locales[code] = data;
-}
-
-/**
- * Получение всех доступных языков
- */
-export function getAvailableLocales(): LocaleCode[] {
-  return Object.keys(locales) as LocaleCode[];
-}
-
-/**
- * Проверка, существует ли локаль
- */
-export function hasLocale(code: string): code is LocaleCode {
-  return code in locales;
-}
-
-/**
- * Принудительное обновление всех слушателей (полезно после добавления новых локалей)
- */
-export function refreshLocale(): void {
-  for (const listener of listeners) {
     try {
-      listener();
+        const saved = storage.get<'ru' | 'en'>('language');
+        if (saved === 'ru' || saved === 'en') return saved;
     } catch (error) {
-      logger.error('Locale refresh listener error:', error);
+        logger.debug('Failed to read language from storage:', error);
     }
-  }
+
+    try {
+        const lang = navigator.language || navigator.languages?.[0] || 'ru';
+        return lang.startsWith('ru') ? 'ru' : 'en';
+    } catch (error) {
+        logger.debug('Failed to detect browser language:', error);
+        return 'ru';
+    }
 }
 
-// Экспортируем тип для удобства
+/** Initialize on app start. */
+export function initLocale(): void {
+    const detected = detectLocale();
+    // Force-apply even if it matches the default, so `currentDict` is set.
+    currentLocale = detected;
+    currentDict = loadDict(detected);
+    try {
+        storage.set<'ru' | 'en'>('language', detected);
+    } catch {}
+    logger.info(`🌐 Locale initialized: ${detected}`);
+}
+
+/** Subscribe to locale changes. Returns an unsubscribe function. */
+export function onLocaleChange(callback: () => void): () => void {
+    listeners.push(callback);
+    return () => {
+        listeners = listeners.filter((cb) => cb !== callback);
+    };
+}
+
 export type { LocaleCode as Locale };

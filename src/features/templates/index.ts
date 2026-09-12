@@ -1,30 +1,44 @@
-// src/features/templates/index.ts
+/*
+* @author: potemk.in
+* @brief: Quick reply templates triggered by /command in the composer.
+* @desc: Pure apply-based feature. Registry triggers apply() when a contenteditable composer appears. Attaches the input listener once per composer element via WeakSet. No local observer, no timers.
+*/
 
 import { logger } from '../../core/logger';
 import { storage } from '../../core/storage';
-import { watchDOM } from '../../core/observer';
 import { qs } from '../../core/dom';
 import { OFFSETS } from '../../offsets';
 import { getAllTemplates } from './storage';
 import { Template } from './types';
 
-let isEnabled = false;
-let unwatch: (() => void) | null = null;
-let modalOpen = false;
+// ============================================================
+// CONSTANTS
+// ============================================================
+
+const COMPOSER_SELECTORS = [
+    OFFSETS.classes.composerInput,
+    '.contenteditable.svelte-1k31az8',
+    '.composer [contenteditable="true"]',
+    '[contenteditable="true"]',
+];
+
+const MODAL_CLASS = 'kmod-template-modal';
 
 // ============================================================
-// ПОИСК ПОЛЯ ВВОДА
+// STATE
+// ============================================================
+
+let isEnabled = false;
+let modalOpen = false;
+let modalKeyHandler: ((e: KeyboardEvent) => void) | null = null;
+const boundInputs = new WeakSet<HTMLElement>();
+
+// ============================================================
+// COMPOSER DISCOVERY
 // ============================================================
 
 function findComposerInput(): HTMLElement | null {
-    const selectors = [
-        OFFSETS.classes.composerInput,
-        '.contenteditable.svelte-1k31az8',
-        '.composer [contenteditable="true"]',
-        '[contenteditable="true"]',
-    ];
-    
-    for (const selector of selectors) {
+    for (const selector of COMPOSER_SELECTORS) {
         const el = qs<HTMLElement>(selector);
         if (el) return el;
     }
@@ -32,18 +46,27 @@ function findComposerInput(): HTMLElement | null {
 }
 
 // ============================================================
-// КАСТОМНАЯ МОДАЛКА
+// MODAL
 // ============================================================
+
+function closeModal(overlay: HTMLElement): void {
+    overlay.remove();
+    modalOpen = false;
+    if (modalKeyHandler) {
+        document.removeEventListener('keydown', modalKeyHandler);
+        modalKeyHandler = null;
+    }
+}
 
 function showTemplateModal(template: Template): void {
     if (modalOpen) return;
     modalOpen = true;
 
-    const oldModal = document.querySelector('.kmod-template-modal');
-    if (oldModal) oldModal.remove();
+    const existing = document.querySelector(`.${MODAL_CLASS}`);
+    if (existing) existing.remove();
 
     const overlay = document.createElement('div');
-    overlay.className = 'kmod-template-modal';
+    overlay.className = MODAL_CLASS;
     overlay.style.cssText = `
         position: fixed;
         inset: 0;
@@ -70,12 +93,7 @@ function showTemplateModal(template: Template): void {
     `;
 
     const title = document.createElement('div');
-    title.style.cssText = `
-        font-size: 18px;
-        font-weight: 700;
-        color: #f2f3f5;
-        margin-bottom: 4px;
-    `;
+    title.style.cssText = 'font-size:18px;font-weight:700;color:#f2f3f5;margin-bottom:4px;';
     title.textContent = '📝 Шаблон';
 
     const commandBlock = document.createElement('div');
@@ -110,11 +128,7 @@ function showTemplateModal(template: Template): void {
     textBlock.textContent = template.text;
 
     const btnWrapper = document.createElement('div');
-    btnWrapper.style.cssText = `
-        display: flex;
-        gap: 10px;
-        justify-content: flex-end;
-    `;
+    btnWrapper.style.cssText = 'display:flex;gap:10px;justify-content:flex-end;';
 
     const copyBtn = document.createElement('button');
     copyBtn.style.cssText = `
@@ -155,10 +169,7 @@ function showTemplateModal(template: Template): void {
     closeBtn.textContent = 'Закрыть';
     closeBtn.onmouseenter = () => { closeBtn.style.background = '#6d6f78'; };
     closeBtn.onmouseleave = () => { closeBtn.style.background = '#4e5058'; };
-    closeBtn.onclick = () => {
-        overlay.remove();
-        modalOpen = false;
-    };
+    closeBtn.onclick = () => closeModal(overlay);
 
     btnWrapper.appendChild(copyBtn);
     btnWrapper.appendChild(closeBtn);
@@ -171,24 +182,19 @@ function showTemplateModal(template: Template): void {
     document.body.appendChild(overlay);
 
     overlay.addEventListener('click', (e) => {
-        if (e.target === overlay) {
-            overlay.remove();
-            modalOpen = false;
-        }
+        if (e.target === overlay) closeModal(overlay);
     });
 
-    const escHandler = (e: KeyboardEvent) => {
+    modalKeyHandler = (e: KeyboardEvent) => {
         if (e.key === 'Escape') {
-            overlay.remove();
-            modalOpen = false;
-            document.removeEventListener('keydown', escHandler);
+            closeModal(overlay);
         }
     };
-    document.addEventListener('keydown', escHandler);
+    document.addEventListener('keydown', modalKeyHandler);
 }
 
 // ============================================================
-// ОБРАБОТКА ВВОДА
+// INPUT HANDLING
 // ============================================================
 
 function processInput(input: HTMLElement): void {
@@ -203,21 +209,12 @@ function processInput(input: HTMLElement): void {
 
     const fullCommand = '/' + match[1];
     const allTemplates = getAllTemplates();
-    const template = allTemplates.find(t =>
-        t.command.toLowerCase() === fullCommand.toLowerCase()
+    const template = allTemplates.find(
+        (t) => t.command.toLowerCase() === fullCommand.toLowerCase()
     );
-
     if (!template) return;
 
     showTemplateModal(template);
-}
-
-function setupInputListener(): void {
-    const input = findComposerInput();
-    if (!input) return;
-
-    input.removeEventListener('input', inputHandler);
-    input.addEventListener('input', inputHandler);
 }
 
 function inputHandler(e: Event): void {
@@ -225,42 +222,47 @@ function inputHandler(e: Event): void {
     if (input) processInput(input);
 }
 
+function attachToComposer(): void {
+    const input = findComposerInput();
+    if (!input) return;
+    if (boundInputs.has(input)) return;
+
+    input.addEventListener('input', inputHandler);
+    boundInputs.add(input);
+}
+
 // ============================================================
-// ПУБЛИЧНЫЙ API
+// PUBLIC API
 // ============================================================
 
+/** Idempotent — ensures the current composer has our input listener. */
 export function apply(): void {
-    const enabled = storage.getBoolean('templates' as any);
-    if (enabled) {
-        setupInputListener();
-    }
+    if (!storage.getBoolean('templates' as any)) return;
+    attachToComposer();
 }
 
 export function enable(): void {
     if (isEnabled) return;
     isEnabled = true;
     logger.info('📝 Templates enabled');
-    setupInputListener();
-
-    if (!unwatch) {
-        unwatch = watchDOM(() => {
-            setupInputListener();
-        });
-    }
+    attachToComposer();
 }
 
 export function disable(): void {
     if (!isEnabled) return;
     isEnabled = false;
 
-    if (unwatch) {
-        unwatch();
-        unwatch = null;
-    }
-
-    const modal = document.querySelector('.kmod-template-modal');
+    const modal = document.querySelector(`.${MODAL_CLASS}`);
     if (modal) modal.remove();
     modalOpen = false;
+    if (modalKeyHandler) {
+        document.removeEventListener('keydown', modalKeyHandler);
+        modalKeyHandler = null;
+    }
+
+    // Detach listeners from any currently bound composers
+    const input = findComposerInput();
+    if (input) input.removeEventListener('input', inputHandler);
 
     logger.info('📝 Templates disabled');
 }
@@ -269,7 +271,8 @@ export function toggle(): boolean {
     const current = storage.getBoolean('templates' as any);
     const newState = !current;
     storage.setBoolean('templates' as any, newState);
-    if (newState) enable(); else disable();
+    if (newState) enable();
+    else disable();
     return newState;
 }
 

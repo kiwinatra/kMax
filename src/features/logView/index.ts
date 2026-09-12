@@ -1,74 +1,256 @@
-// src/features/logView/index.ts
+/*
+* @author: potemk.in
+* @brief: Real-time log overlay for console, errors, XHR and fetch.
+* @desc: Heavy interception without the lag. Key optimizations:
+*       - Log args are stored raw and formatted lazily only when rendered.
+*       - A pool of DOM rows is reused instead of creating/removing nodes.
+*       - Rendering is rate-limited per animation frame; overflow is dropped.
+*       - XHR hooks are installed on the prototype once (no per-instance wrappers).
+*       - Mod's own [KMOD] logs are ignored to prevent feedback loops.
+*       - Auto-scroll reads layout at most once per frame.
+*       - All native APIs are restored cleanly on disable().
+*/
 
 import { logger } from '../../core/logger';
 import { storage } from '../../core/storage';
-import { createElement, dom } from '../../core/dom';
+import { createElement } from '../../core/dom';
 
 // ============================================================
-// КОНСТАНТЫ
+// CONSTANTS
 // ============================================================
 
-const MAX_LOGS = 150; // увеличено до 150
-const BATCH_SIZE = 5;
-const BATCH_DELAY = 100;
-const MAX_STRING_LENGTH = 500; // обрезка длинных строк
+const MAX_LOGS = 150;
+const MAX_LOGS_PER_FRAME = 15;
+const MAX_PENDING = 500;
+const MAX_ARG_LENGTH = 400;
+const AUTOSCROLL_THRESHOLD = 20;
+const KMOD_PREFIX = '[KMOD]';
+
+const LEVEL_COLORS: Record<string, string> = {
+    log: '#b5bac1',
+    info: '#3ba55c',
+    warn: '#faa81a',
+    error: '#ed4245',
+};
+
+type LogLevel = 'log' | 'info' | 'warn' | 'error';
+
+interface LogEntry {
+    time: string;
+    type: string;
+    level: LogLevel;
+    args: unknown[];
+}
+
+interface LogRow {
+    el: HTMLDivElement;
+    time: HTMLSpanElement;
+    type: HTMLSpanElement;
+    msg: HTMLSpanElement;
+}
 
 // ============================================================
-// СОСТОЯНИЕ
+// STATE
 // ============================================================
 
 let isEnabled = false;
-let logContainer: HTMLDivElement | null = null;
 let logWrapper: HTMLDivElement | null = null;
-let pendingLogs: { type: string; level: string; data: any }[] = [];
-let batchTimeout: number | null = null;
-let isProcessing = false;
-let logCount = 0;
+let logContainer: HTMLDivElement | null = null;
+
+const activeRows: LogRow[] = []; // in display order, oldest first
+const pendingEntries: LogEntry[] = [];
+
+let rafScheduled = false;
+let scrollRafScheduled = false;
+let autoScroll = true;
 
 // ============================================================
-// ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+// INTERCEPTOR BOOKKEEPING
 // ============================================================
 
-/**
- * Безопасное преобразование в строку (с обрезкой)
- */
-function safeStringify(obj: any): string {
-    if (obj === undefined) return 'undefined';
-    if (obj === null) return 'null';
-    if (typeof obj === 'function') return '[Function]';
-    if (typeof obj === 'symbol') return obj.toString();
-    if (obj instanceof Error) return `${obj.name}: ${obj.message}`;
-    
+interface OriginalApis {
+    log: typeof console.log;
+    warn: typeof console.warn;
+    error: typeof console.error;
+    info: typeof console.info;
+    debug: typeof console.debug;
+    fetch: typeof window.fetch | null;
+    xhrOpen: typeof XMLHttpRequest.prototype.open | null;
+    xhrSend: typeof XMLHttpRequest.prototype.send | null;
+    beacon: typeof navigator.sendBeacon | null;
+}
+
+let originals: OriginalApis | null = null;
+
+// ============================================================
+// FAST FORMATTER (no indentation, aggressive truncation)
+// ============================================================
+
+function formatArg(arg: unknown): string {
+    if (arg === null) return 'null';
+    if (arg === undefined) return 'undefined';
+
+    const t = typeof arg;
+    if (t === 'string') return arg as string;
+    if (t === 'number' || t === 'boolean' || t === 'bigint') return String(arg);
+    if (t === 'function') return '[Function]';
+    if (t === 'symbol') return (arg as symbol).toString();
+    if (arg instanceof Error) return `${arg.name}: ${arg.message}`;
+
     try {
-        let str = JSON.stringify(obj, (key, value) => {
-            if (typeof value === 'function') return '[Function]';
-            if (typeof value === 'symbol') return value.toString();
-            if (value instanceof Error) return `${value.name}: ${value.message}`;
-            return value;
-        }, 2);
-        
-        // Обрезаем длинные строки
-        if (str.length > MAX_STRING_LENGTH) {
-            str = str.slice(0, MAX_STRING_LENGTH) + '... (truncated)';
-        }
-        return str;
+        const s = JSON.stringify(arg);
+        return s.length > MAX_ARG_LENGTH ? s.slice(0, MAX_ARG_LENGTH) + '…' : s;
     } catch {
-        return String(obj);
+        return String(arg);
     }
 }
 
-/**
- * Форматирование времени
- */
-function formatTime(): string {
-    const d = new Date();
-    return d.toLocaleTimeString('ru-RU', { hour12: false }) + 
-           '.' + String(d.getMilliseconds()).padStart(3, '0');
+function formatArgs(args: unknown[]): string {
+    if (args.length === 1) return formatArg(args[0]);
+    let out = '';
+    for (let i = 0; i < args.length; i++) {
+        if (i > 0) out += ' ';
+        out += formatArg(args[i]);
+    }
+    return out.length > MAX_ARG_LENGTH ? out.slice(0, MAX_ARG_LENGTH) + '…' : out;
 }
 
-/**
- * Создание UI для логов
- */
+// ============================================================
+// QUEUE
+// ============================================================
+
+function makeTime(): string {
+    const d = new Date();
+    return (
+        d.toLocaleTimeString('ru-RU', { hour12: false }) +
+        '.' +
+        String(d.getMilliseconds()).padStart(3, '0')
+    );
+}
+
+function queueLog(type: string, level: LogLevel, args: unknown[]): void {
+    if (!isEnabled || !logContainer) return;
+
+    // Skip our own logger to avoid feedback loop
+    const first = args[0];
+    if (typeof first === 'string' && first.includes(KMOD_PREFIX)) return;
+
+    if (pendingEntries.length >= MAX_PENDING) {
+        // Drop oldest pending under pressure
+        pendingEntries.shift();
+    }
+    pendingEntries.push({ time: makeTime(), type, level, args });
+
+    scheduleFlush();
+}
+
+function scheduleFlush(): void {
+    if (rafScheduled) return;
+    rafScheduled = true;
+    requestAnimationFrame(flush);
+}
+
+// ============================================================
+// ROW POOL
+// ============================================================
+
+function createRow(): LogRow {
+    const el = createElement('div', {
+        styles: {
+            display: 'flex',
+            gap: '8px',
+            fontSize: '12px',
+            lineHeight: '1.3',
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word',
+            opacity: '0.95',
+            maxWidth: '90vw',
+            padding: '2px 0',
+            borderBottom: '1px solid rgba(255,255,255,0.04)',
+        },
+    });
+
+    const time = document.createElement('span');
+    time.style.cssText = 'color:#888;flex-shrink:0;min-width:72px;';
+
+    const type = document.createElement('span');
+    type.style.cssText = 'font-weight:600;flex-shrink:0;min-width:50px;';
+
+    const msg = document.createElement('span');
+    msg.style.cssText = 'color:#f0f0f0;word-break:break-word;';
+
+    el.appendChild(time);
+    el.appendChild(type);
+    el.appendChild(msg);
+
+    return { el, time, type, msg };
+}
+
+function acquireRow(): LogRow {
+    if (activeRows.length >= MAX_LOGS) {
+        // Reuse the oldest — it will be re-appended at the end.
+        const oldest = activeRows.shift()!;
+        return oldest;
+    }
+    const row = createRow();
+    activeRows.push(row);
+    return row;
+}
+
+// ============================================================
+// RENDER
+// ============================================================
+
+function flush(): void {
+    rafScheduled = false;
+    if (!logContainer) return;
+
+    if (pendingEntries.length === 0) return;
+
+    const container = logContainer;
+
+    // Check scroll position once per frame (3 layout reads max).
+    const wasAtBottom =
+        container.scrollTop + container.clientHeight >=
+        container.scrollHeight - AUTOSCROLL_THRESHOLD;
+    if (wasAtBottom) autoScroll = true;
+
+    const budget = Math.min(pendingEntries.length, MAX_LOGS_PER_FRAME);
+    for (let i = 0; i < budget; i++) {
+        const entry = pendingEntries[i];
+        const row = acquireRow();
+
+        row.time.textContent = entry.time;
+        row.type.textContent = entry.type;
+        row.type.style.color = LEVEL_COLORS[entry.level] || '#888';
+        row.el.style.color = LEVEL_COLORS[entry.level] || '#b5bac1';
+        row.msg.textContent = formatArgs(entry.args);
+
+        // appendChild moves an existing node to the end — perfect for reuse.
+        container.appendChild(row.el);
+    }
+    pendingEntries.splice(0, budget);
+
+    if (autoScroll) scheduleScroll();
+
+    if (pendingEntries.length > 0) scheduleFlush();
+}
+
+function scheduleScroll(): void {
+    if (scrollRafScheduled) return;
+    scrollRafScheduled = true;
+    requestAnimationFrame(() => {
+        scrollRafScheduled = false;
+        if (logContainer && autoScroll) {
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+    });
+}
+
+// ============================================================
+// UI
+// ============================================================
+
 function createLogUI(): void {
     if (logWrapper) return;
 
@@ -101,396 +283,246 @@ function createLogUI(): void {
             scrollbarWidth: 'none',
             padding: '4px 6px',
         },
-    });
+    }) as HTMLDivElement;
 
-    // Скрываем скроллбар для WebKit
-    logContainer.style.cssText += '::-webkit-scrollbar { display: none; }';
+    // Track user's scroll intent without per-log layout reads.
+    logContainer.addEventListener(
+        'scroll',
+        () => {
+            if (!logContainer) return;
+            autoScroll =
+                logContainer.scrollTop + logContainer.clientHeight >=
+                logContainer.scrollHeight - AUTOSCROLL_THRESHOLD;
+        },
+        { passive: true }
+    );
 
     logWrapper.appendChild(logContainer);
     document.body.appendChild(logWrapper);
 }
 
-/**
- * Добавление лога в UI (с батчингом)
- */
-function addLogToUI(type: string, level: 'log' | 'info' | 'warn' | 'error', data: any): void {
-    if (!isEnabled || !logContainer) return;
-    if (isProcessing) return;
-    isProcessing = true;
-
-    try {
-        // Ограничиваем количество логов
-        while (logContainer.children.length >= MAX_LOGS) {
-            const first = logContainer.firstChild;
-            if (first) logContainer.removeChild(first);
-        }
-
-        const colors: Record<string, string> = {
-            log: '#b5bac1',
-            info: '#3ba55c',
-            warn: '#faa81a',
-            error: '#ed4245',
-        };
-
-        const line = document.createElement('div');
-        line.style.cssText = `
-            display: flex;
-            gap: 8px;
-            font-size: 12px;
-            line-height: 1.3;
-            white-space: pre-wrap;
-            word-break: break-word;
-            opacity: 0.95;
-            color: ${colors[level] || '#b5bac1'};
-            max-width: 90vw;
-            padding: 2px 0;
-            border-bottom: 1px solid rgba(255,255,255,0.04);
-            animation: kmodLogFade 0.15s ease;
-        `;
-
-        // Время
-        const timeSpan = document.createElement('span');
-        timeSpan.textContent = formatTime();
-        timeSpan.style.cssText = 'color: #888; flex-shrink: 0; min-width: 72px;';
-
-        // Тип
-        const typeSpan = document.createElement('span');
-        typeSpan.textContent = type;
-        typeSpan.style.cssText = `
-            color: ${colors[level] || '#888'};
-            font-weight: 600;
-            flex-shrink: 0;
-            min-width: 50px;
-        `;
-
-        // Сообщение
-        const msgSpan = document.createElement('span');
-        const text = typeof data === 'string' ? data : safeStringify(data);
-        msgSpan.textContent = text;
-        msgSpan.style.cssText = 'color: #f0f0f0; word-break: break-word;';
-
-        line.appendChild(timeSpan);
-        line.appendChild(typeSpan);
-        line.appendChild(msgSpan);
-        logContainer.appendChild(line);
-
-        // Автоскролл
-        if (logContainer.scrollTop >= logContainer.scrollHeight - logContainer.clientHeight - 20) {
-            setTimeout(() => {
-                if (logContainer) {
-                    logContainer.scrollTop = logContainer.scrollHeight;
-                }
-            }, 10);
-        }
-
-        logCount++;
-    } catch (e) {
-        // Тихо
-    } finally {
-        isProcessing = false;
-    }
-}
-
-/**
- * Пакетная обработка логов
- */
-function flushLogs(): void {
-    if (pendingLogs.length === 0) return;
-
-    const logs = pendingLogs.splice(0, BATCH_SIZE);
-    for (const log of logs) {
-        addLogToUI(log.type, log.level as any, log.data);
-    }
-
-    if (pendingLogs.length > 0 && !batchTimeout) {
-        batchTimeout = window.setTimeout(() => {
-            batchTimeout = null;
-            flushLogs();
-        }, BATCH_DELAY);
-    }
-}
-
-/**
- * Добавление лога в очередь
- */
-function queueLog(type: string, level: 'log' | 'info' | 'warn' | 'error', data: any): void {
-    if (!isEnabled) return;
-    
-    pendingLogs.push({ type, level, data });
-    
-    if (pendingLogs.length > BATCH_SIZE * 2) {
-        flushLogs();
-    } else if (!batchTimeout) {
-        batchTimeout = window.setTimeout(() => {
-            batchTimeout = null;
-            flushLogs();
-        }, BATCH_DELAY);
-    }
-}
-
-// ============================================================
-// ПЕРЕХВАТЫ
-// ============================================================
-
-let originalConsole: {
-    log: typeof console.log;
-    warn: typeof console.warn;
-    error: typeof console.error;
-    info: typeof console.info;
-} | null = null;
-
-let originalFetch: typeof window.fetch | null = null;
-let originalXHR: typeof XMLHttpRequest | null = null;
-
-/**
- * Перехват console
- */
-function interceptConsole(): void {
-    if (originalConsole) return;
-
-    originalConsole = {
-        log: console.log.bind(console),
-        warn: console.warn.bind(console),
-        error: console.error.bind(console),
-        info: console.info.bind(console),
-    };
-
-    console.log = (...args: any[]) => {
-        const msg = args.map(a => typeof a === 'object' ? safeStringify(a) : String(a)).join(' ');
-        queueLog('LOG', 'log', msg);
-        originalConsole!.log(...args);
-    };
-
-    console.warn = (...args: any[]) => {
-        const msg = args.map(a => typeof a === 'object' ? safeStringify(a) : String(a)).join(' ');
-        queueLog('WARN', 'warn', msg);
-        originalConsole!.warn(...args);
-    };
-
-    console.error = (...args: any[]) => {
-        const msg = args.map(a => typeof a === 'object' ? safeStringify(a) : String(a)).join(' ');
-        queueLog('ERROR', 'error', msg);
-        originalConsole!.error(...args);
-    };
-
-    console.info = (...args: any[]) => {
-        const msg = args.map(a => typeof a === 'object' ? safeStringify(a) : String(a)).join(' ');
-        queueLog('INFO', 'info', msg);
-        originalConsole!.info(...args);
-    };
-}
-
-/**
- * Перехват ошибок
- */
-function interceptErrors(): void {
-    window.addEventListener('error', (e) => {
-        queueLog('ERROR', 'error', `${e.message} at ${e.filename}:${e.lineno}`);
-    });
-
-    window.addEventListener('unhandledrejection', (e) => {
-        queueLog('ERROR', 'error', `Unhandled Rejection: ${safeStringify(e.reason)}`);
-    });
-}
-
-/**
- * Перехват XHR
- */
-function interceptXHR(): void {
-    if (originalXHR) return;
-    
-    originalXHR = window.XMLHttpRequest;
-    const XHR = originalXHR;
-
-    window.XMLHttpRequest = function(this: any, ...args: any[]) {
-        const instance = new (XHR as any)(...args);
-        let url = '';
-        let method = '';
-
-        const origOpen = instance.open;
-        instance.open = function(m: string, u: string | URL, async?: boolean, user?: string, password?: string) {
-            url = typeof u === 'string' ? u : u.href;
-            method = m;
-            origOpen.call(instance, m, u, async !== false, user, password);
-        };
-
-        const origSend = instance.send;
-        instance.send = function(body?: any) {
-            queueLog('XHR', 'info', `${method} ${url}`);
-            
-            const origOnReadyStateChange = instance.onreadystatechange;
-            instance.onreadystatechange = function(ev: Event) {
-                if (instance.readyState === 4) {
-                    const level = instance.status >= 400 ? 'error' : 'info';
-                    queueLog('XHR', level, `${method} ${url} -> ${instance.status}`);
-                }
-                if (origOnReadyStateChange) origOnReadyStateChange.call(instance, ev);
-            };
-
-            return origSend.call(instance, body);
-        };
-
-        return instance;
-    } as any;
-
-    Object.assign(window.XMLHttpRequest, XHR);
-    window.XMLHttpRequest.prototype = XHR.prototype;
-}
-
-/**
- * Перехват Fetch
- */
-function interceptFetch(): void {
-    if (originalFetch) return;
-    
-    originalFetch = window.fetch;
-    window.fetch = function(input: RequestInfo | URL, init?: RequestInit) {
-        const url = typeof input === 'string' ? input : 
-                   input instanceof URL ? input.href : 
-                   (input as any).url || '';
-        const method = init?.method || 'GET';
-        queueLog('FETCH', 'info', `${method} ${url}`);
-
-        return originalFetch!.call(this, input, init)
-            .then((response) => {
-                const level = response.ok ? 'info' : 'error';
-                queueLog('FETCH', level, `${method} ${url} -> ${response.status}`);
-                return response;
-            })
-            .catch((err) => {
-                queueLog('FETCH', 'error', `${method} ${url} ERROR`);
-                throw err;
-            });
-    };
-}
-
-// ============================================================
-// ПУБЛИЧНЫЙ API
-// ============================================================
-
-/**
- * Включение LogView
- */
-export function enable(): void {
-    if (isEnabled) return;
-    isEnabled = true;
-
-    createLogUI();
-    queueLog('INFO', 'info', '🟢 LogView active');
-
-    interceptConsole();
-    interceptErrors();
-    interceptXHR();
-    interceptFetch();
-
-    // Добавляем анимацию
-    const style = document.createElement('style');
-    style.id = 'kmod-logview-styles';
-    style.textContent = `
-        @keyframes kmodLogFade {
-            from { opacity: 0; transform: translateX(10px); }
-            to { opacity: 1; transform: translateX(0); }
-        }
-    `;
-    document.head.appendChild(style);
-
-    logger.info('📡 LogView enabled');
-}
-
-/**
- * Отключение LogView
- */
-export function disable(): void {
-    if (!isEnabled) return;
-    isEnabled = false;
-
-    // Очищаем очередь
-    if (batchTimeout) {
-        clearTimeout(batchTimeout);
-        batchTimeout = null;
-    }
-    pendingLogs = [];
-
-    // Восстанавливаем console
-    if (originalConsole) {
-        console.log = originalConsole.log;
-        console.warn = originalConsole.warn;
-        console.error = originalConsole.error;
-        console.info = originalConsole.info;
-        originalConsole = null;
-    }
-
-    // Восстанавливаем fetch
-    if (originalFetch) {
-        window.fetch = originalFetch;
-        originalFetch = null;
-    }
-
-    // Восстанавливаем XHR
-    if (originalXHR) {
-        window.XMLHttpRequest = originalXHR;
-        originalXHR = null;
-    }
-
-    // Удаляем UI
+function teardownUI(): void {
     if (logWrapper) {
         logWrapper.remove();
         logWrapper = null;
         logContainer = null;
     }
+    activeRows.length = 0;
+    pendingEntries.length = 0;
+    rafScheduled = false;
+    scrollRafScheduled = false;
+    autoScroll = true;
+}
 
-    // Удаляем стили
-    const styles = document.querySelector('#kmod-logview-styles');
-    if (styles) styles.remove();
+// ============================================================
+// INTERCEPTORS
+// ============================================================
+
+const xhrMeta = new WeakMap<XMLHttpRequest, { method: string; url: string }>();
+
+function interceptConsole(): void {
+    if (originals) return;
+
+    originals = {
+        log: console.log,
+        warn: console.warn,
+        error: console.error,
+        info: console.info,
+        debug: console.debug,
+        fetch: window.fetch,
+        xhrOpen: XMLHttpRequest.prototype.open,
+        xhrSend: XMLHttpRequest.prototype.send,
+        beacon: navigator.sendBeacon,
+    };
+
+    const queueFromArgs = (type: string, level: LogLevel, args: unknown[]) => {
+        queueLog(type, level, args);
+    };
+
+    console.log = function (...args: unknown[]) {
+        queueFromArgs('LOG', 'log', args);
+        originals!.log.apply(console, args as any);
+    };
+    console.warn = function (...args: unknown[]) {
+        queueFromArgs('WARN', 'warn', args);
+        originals!.warn.apply(console, args as any);
+    };
+    console.error = function (...args: unknown[]) {
+        queueFromArgs('ERROR', 'error', args);
+        originals!.error.apply(console, args as any);
+    };
+    console.info = function (...args: unknown[]) {
+        queueFromArgs('INFO', 'info', args);
+        originals!.info.apply(console, args as any);
+    };
+    console.debug = function (...args: unknown[]) {
+        queueFromArgs('DEBUG', 'log', args);
+        originals!.debug.apply(console, args as any);
+    };
+}
+
+function interceptErrors(): void {
+    window.addEventListener('error', (e) => {
+        queueLog('ERROR', 'error', [e.message, `${e.filename}:${e.lineno}`]);
+    });
+    window.addEventListener('unhandledrejection', (e) => {
+        queueLog('ERROR', 'error', ['Unhandled Rejection:', e.reason]);
+    });
+}
+
+function interceptXHR(): void {
+    if (!originals || !originals.xhrOpen || !originals.xhrSend) return;
+
+    const origOpen = originals.xhrOpen;
+    const origSend = originals.xhrSend;
+
+    XMLHttpRequest.prototype.open = function (
+        this: XMLHttpRequest,
+        method: string,
+        url: string | URL,
+        ...rest: any[]
+    ) {
+        xhrMeta.set(this, { method, url: String(url) });
+        // @ts-expect-error passthrough
+        return origOpen.apply(this, [method, url, ...rest]);
+    };
+
+    XMLHttpRequest.prototype.send = function (this: XMLHttpRequest, body?: any) {
+        const meta = xhrMeta.get(this);
+        if (meta) {
+            queueLog('XHR', 'info', [meta.method, meta.url]);
+            this.addEventListener(
+                'loadend',
+                () => {
+                    const level: LogLevel = this.status >= 400 ? 'error' : 'info';
+                    queueLog('XHR', level, [
+                        `${meta.method} ${meta.url} → ${this.status}`,
+                    ]);
+                },
+                { once: true }
+            );
+        }
+        return origSend.apply(this, [body]);
+    };
+}
+
+function interceptFetch(): void {
+    if (!originals || !originals.fetch) return;
+    const origFetch = originals.fetch;
+
+    window.fetch = function (
+        input: RequestInfo | URL,
+        init?: RequestInit
+    ): Promise<Response> {
+        const url =
+            typeof input === 'string'
+                ? input
+                : input instanceof URL
+                ? input.href
+                : (input as Request).url;
+        const method = init?.method || 'GET';
+        queueLog('FETCH', 'info', [method, url]);
+
+        return origFetch(input, init).then(
+            (response) => {
+                const level: LogLevel = response.ok ? 'info' : 'error';
+                queueLog('FETCH', level, [method, url, '→', response.status]);
+                return response;
+            },
+            (err) => {
+                queueLog('FETCH', 'error', [method, url, 'ERROR', err]);
+                throw err;
+            }
+        );
+    } as typeof window.fetch;
+}
+
+function interceptBeacon(): void {
+    if (!originals || !originals.beacon) return;
+    const orig = originals.beacon;
+
+    navigator.sendBeacon = function (
+        url: string | URL,
+        data?: any
+    ): boolean {
+        queueLog('BEACON', 'info', [String(url)]);
+        return orig(url, data);
+    } as typeof navigator.sendBeacon;
+}
+
+function restoreAll(): void {
+    if (!originals) return;
+
+    console.log = originals.log;
+    console.warn = originals.warn;
+    console.error = originals.error;
+    console.info = originals.info;
+    console.debug = originals.debug;
+
+    if (originals.fetch) window.fetch = originals.fetch;
+    if (originals.xhrOpen) XMLHttpRequest.prototype.open = originals.xhrOpen;
+    if (originals.xhrSend) XMLHttpRequest.prototype.send = originals.xhrSend;
+    if (originals.beacon) navigator.sendBeacon = originals.beacon;
+
+    originals = null;
+}
+
+// ============================================================
+// PUBLIC API
+// ============================================================
+
+export function enable(): void {
+    if (isEnabled) return;
+    isEnabled = true;
+
+    createLogUI();
+    queueLog('INFO', 'info', ['🟢 LogView active']);
+
+    interceptConsole();
+    interceptErrors();
+    interceptXHR();
+    interceptFetch();
+    interceptBeacon();
+
+    logger.info('📡 LogView enabled');
+}
+
+export function disable(): void {
+    if (!isEnabled) return;
+    isEnabled = false;
+
+    restoreAll();
+    teardownUI();
 
     logger.info('📡 LogView disabled');
 }
 
-/**
- * Переключение состояния
- */
 export function toggle(): boolean {
-    const current = storage.getBoolean('logView' as any);
-    const newState = !current;
-    storage.setBoolean('logView' as any, newState);
-
-    if (newState) {
-        enable();
-    } else {
-        disable();
-    }
-
+    const newState = !storage.getBoolean('logView');
+    storage.setBoolean('logView', newState);
+    if (newState) enable();
+    else disable();
     return newState;
 }
 
-/**
- * Применение текущего состояния (для registry)
- */
 export function apply(): void {
-    const enabled = storage.getBoolean('logView' as any);
-    if (enabled) {
-        enable();
+    if (storage.getBoolean('logView')) {
+        if (!isEnabled) enable();
     } else {
-        disable();
+        if (isEnabled) disable();
     }
 }
 
-/**
- * Очистка всех логов
- */
 export function clearLogs(): void {
     if (logContainer) {
         logContainer.innerHTML = '';
-        logCount = 0;
+        activeRows.length = 0;
     }
+    pendingEntries.length = 0;
 }
 
-// ============================================================
-// ОЧИСТКА ПРИ ВЫГРУЗКЕ
-// ============================================================
-
-window.addEventListener('beforeunload', () => {
-    if (isEnabled) {
-        disable();
-    }
-});
+if (typeof window !== 'undefined') {
+    window.addEventListener('beforeunload', () => {
+        if (isEnabled) disable();
+    });
+}

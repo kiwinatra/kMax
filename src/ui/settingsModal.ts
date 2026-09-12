@@ -1,10 +1,18 @@
-import { createElement, qs, qsa } from '../core/dom';
+/*
+* @author: potemk.in
+* @brief: Settings modal — sections, feature toggles, language switcher, font picker, chat tags & templates.
+* @desc: Refactored to eliminate the three copies of "refresh everything after locale change".
+*       All UI refresh now goes through a single refreshModalUI(root) helper.
+*       Reset button clears the registry's enabled-cache before reloading so the
+*       fresh page reads correct state. Feature toggle no longer double-calls
+*       enable/disable (registry does it already).
+*/
+
 import { storage } from '../core/storage';
-import { logger } from '../core/logger';
 import { CONFIG } from '../config';
 import { getLocale, setLocale, getCurrentLocale, onLocaleChange } from '../locales';
-import { FEATURES, toggleFeature, isFeatureEnabled } from '../registry';
-import { createSettingsIcon, createCloseIcon, createChevronIcon } from './icons';
+import { FEATURES, toggleFeature, isFeatureEnabled, invalidateEnabledCache } from '../registry';
+import { createSettingsIcon } from './icons';
 import {
     fontOptions,
     systemFonts,
@@ -16,8 +24,13 @@ import { openTagManager } from '../features/chatTags/ui';
 import { getAllTags } from '../features/chatTags/storage';
 import { getAllTemplates, addTemplate, removeTemplate, generateTemplateId } from '../features/templates/storage';
 
+
 const ANIMATION_DURATION = 200;
 const SECTION_ORDER = ['general', 'security', 'appearance', 'media', 'other', 'chats'];
+
+// ============================================================
+// SECTION ICONS
+// ============================================================
 
 function createSectionIcon(type: string): string {
     const icons: Record<string, string> = {
@@ -32,6 +45,10 @@ function createSectionIcon(type: string): string {
     };
     return icons[type] || icons.other;
 }
+
+// ============================================================
+// CSS
+// ============================================================
 
 const CSS_STYLES = `
 @keyframes kmodFadeScale{from{opacity:0;transform:scale(.97) translateY(6px)}to{opacity:1;transform:scale(1) translateY(0)}}
@@ -130,6 +147,10 @@ const FEATURE_SECTION_MAP: Record<string, string> = {
     logView: 'other',
 };
 
+// ============================================================
+// SHARED HELPERS
+// ============================================================
+
 function getOrCreateStyles(): void {
     if (!document.querySelector('#kmod-settings-styles')) {
         const style = document.createElement('style');
@@ -163,6 +184,112 @@ function updateAllTexts(root: HTMLElement): void {
     }
 }
 
+/** Rebuild the font <select> contents with localized labels, preserving current selection. */
+function rebuildFontSelect(select: HTMLSelectElement, keepValue: string): void {
+    select.innerHTML = '';
+    const groups = [
+        { label: 'Системные', fonts: systemFonts },
+        { label: 'Google Fonts', fonts: googleFonts },
+    ];
+    for (const group of groups) {
+        const optgroup = document.createElement('optgroup');
+        optgroup.label = group.label;
+        for (const font of group.fonts) {
+            const option = document.createElement('option');
+            option.value = font.label;
+            const localized = getLocale(font.labelKey as any);
+            option.textContent =
+                localized && localized !== font.labelKey ? localized : font.label;
+            if (font.label === keepValue) option.selected = true;
+            optgroup.appendChild(option);
+        }
+        select.appendChild(optgroup);
+    }
+}
+
+function renderTagsPreview(preview: HTMLElement): void {
+    const tags = getAllTags();
+    preview.innerHTML = '';
+    if (tags.length === 0) {
+        preview.innerHTML = '<span style="color:rgba(255,255,255,0.2);font-size:13px;">Нет тегов</span>';
+        return;
+    }
+    for (const t of tags) {
+        const el = document.createElement('span');
+        el.className = 'kmod-tag-preview-item';
+        el.style.backgroundColor = t.color;
+        el.textContent = t.tagName;
+        preview.appendChild(el);
+    }
+}
+
+function renderTemplatesList(list: HTMLElement, onAfterDelete?: () => void): void {
+    const templates = getAllTemplates();
+    list.innerHTML = '';
+    if (templates.length === 0) {
+        list.innerHTML = '<div style="text-align:center;color:rgba(255,255,255,0.15);padding:8px 0;font-size:13px;">Нет шаблонов</div>';
+        return;
+    }
+    for (const t of templates) {
+        const item = document.createElement('div');
+        item.className = 'kmod-template-item';
+        item.innerHTML = `
+            <span class="kmod-template-command">${t.command}</span>
+            <span class="kmod-template-text">${t.text}</span>
+            <button class="kmod-template-delete" data-id="${t.id}">✕</button>
+        `;
+        const del = item.querySelector('.kmod-template-delete') as HTMLButtonElement | null;
+        del?.addEventListener('click', () => {
+            if (confirm(`Удалить шаблон "${t.command}"?`)) {
+                removeTemplate(t.id);
+                renderTemplatesList(list, onAfterDelete);
+                onAfterDelete?.();
+            }
+        });
+        list.appendChild(item);
+    }
+}
+
+/**
+ * One-shot UI refresh after locale change or external state update.
+ * Replaces the three duplicated blocks that used to live in this file.
+ */
+function refreshModalUI(root: HTMLElement): void {
+    updateAllTexts(root);
+
+    // Feature badges + switches
+    const items = root.querySelectorAll('.kmod-feature-item');
+    for (const item of items) {
+        const badge = item.querySelector('.status-badge');
+        const switchBtn = item.querySelector('.kmod-switch');
+        if (badge && switchBtn) {
+            const isOn = switchBtn.classList.contains('active');
+            badge.textContent = isOn ? getLocale('statusEnabled') : getLocale('statusDisabled');
+            badge.className = `status-badge ${isOn ? 'on' : 'off'}`;
+        }
+    }
+
+    // Font picker labels
+    const fontSelect = root.querySelector('.kmod-font-select') as HTMLSelectElement | null;
+    if (fontSelect) rebuildFontSelect(fontSelect, fontSelect.value);
+
+    // Language select sync
+    const langSelect = root.querySelector('.kmod-language-row select') as HTMLSelectElement | null;
+    if (langSelect) langSelect.value = getCurrentLocale();
+
+    // Tags preview
+    const preview = root.querySelector('.kmod-tags-preview');
+    if (preview) renderTagsPreview(preview as HTMLElement);
+
+    // Templates list
+    const list = root.querySelector('#kmod-templates-list');
+    if (list) renderTemplatesList(list as HTMLElement);
+}
+
+// ============================================================
+// FEATURE ITEM
+// ============================================================
+
 function createFeatureItem(key: string, feature: any): HTMLElement {
     const enabled = isFeatureEnabled(key);
     const label = getLocale(feature.label as any);
@@ -195,8 +322,8 @@ function createFeatureItem(key: string, feature: any): HTMLElement {
 
     const toggleWrapper = document.createElement('div');
     const switchBtn = createSwitch(enabled, () => {
-        toggleFeature(key);
-        const newState = isFeatureEnabled(key);
+        // registry.toggleFeature handles enable/disable internally
+        const newState = toggleFeature(key);
         badge.textContent = newState ? getLocale('statusEnabled') : getLocale('statusDisabled');
         badge.className = `status-badge ${newState ? 'on' : 'off'}`;
         const btn = toggleWrapper.querySelector('.kmod-switch');
@@ -204,14 +331,16 @@ function createFeatureItem(key: string, feature: any): HTMLElement {
             btn.className = `kmod-switch${newState ? ' active' : ''}`;
             btn.setAttribute('aria-checked', String(newState));
         }
-        if (newState && feature.enable) feature.enable();
-        else if (feature.disable) feature.disable();
     });
     toggleWrapper.appendChild(switchBtn);
     item.appendChild(toggleWrapper);
 
     return item;
 }
+
+// ============================================================
+// FONT SELECTOR
+// ============================================================
 
 function createFontSelector(): HTMLElement {
     const container = document.createElement('div');
@@ -252,29 +381,11 @@ function createFontSelector(): HTMLElement {
     select.className = 'kmod-font-select';
     select.style.width = '100%';
 
-    const currentFont = storage.get<string>('fontFamily' as any) || (fontOptions.length > 0 ? fontOptions[0].label : 'Inter');
-    const groups = [
-        { label: 'Системные', fonts: systemFonts },
-        { label: 'Google Fonts', fonts: googleFonts },
-    ];
+    const currentFont =
+        storage.get<string>('fontFamily') ||
+        (fontOptions.length > 0 ? fontOptions[0].label : 'Inter');
 
-    for (const group of groups) {
-        // if (!group.fonts || group.fonts.length === 0) continue;
-        const optgroup = document.createElement('optgroup');
-        optgroup.label = group.label;
-        for (const font of group.fonts) {
-            const option = document.createElement('option');
-            option.value = font.label;
-            const labelKey = `fontFamily${font.label.replace(/[^a-zA-Z]/g, '')}`;
-            const localized = getLocale(labelKey as any);
-            option.textContent = (localized && localized !== labelKey) ? localized : font.label;
-            if (font.label === currentFont) {
-                option.selected = true;
-            }
-            optgroup.appendChild(option);
-        }
-        select.appendChild(optgroup);
-    }
+    rebuildFontSelect(select, currentFont);
 
     const loadIndicator = document.createElement('span');
     loadIndicator.style.cssText = `
@@ -311,6 +422,10 @@ function createFontSelector(): HTMLElement {
 
     return container;
 }
+
+// ============================================================
+// CHATS SECTION
+// ============================================================
 
 function createChatsSection(): HTMLElement {
     const section = document.createElement('div');
@@ -354,22 +469,7 @@ function createChatsSection(): HTMLElement {
 
     const preview = document.createElement('div');
     preview.className = 'kmod-tags-preview';
-    const renderPreview = () => {
-        const tags = getAllTags();
-        preview.innerHTML = '';
-        if (tags.length === 0) {
-            preview.innerHTML = '<span style="color:rgba(255,255,255,0.2);font-size:13px;">Нет тегов</span>';
-            return;
-        }
-        tags.forEach(t => {
-            const el = document.createElement('span');
-            el.className = 'kmod-tag-preview-item';
-            el.style.backgroundColor = t.color;
-            el.textContent = t.tagName;
-            preview.appendChild(el);
-        });
-    };
-    renderPreview();
+    renderTagsPreview(preview);
     section.appendChild(preview);
 
     const divider = document.createElement('hr');
@@ -389,33 +489,7 @@ function createChatsSection(): HTMLElement {
     const list = document.createElement('div');
     list.id = 'kmod-templates-list';
     list.style.cssText = 'margin-bottom:8px;max-height:150px;overflow-y:auto;';
-
-    const renderTemplates = () => {
-        const templates = getAllTemplates();
-        list.innerHTML = '';
-        if (templates.length === 0) {
-            list.innerHTML = '<div style="text-align:center;color:rgba(255,255,255,0.15);padding:8px 0;font-size:13px;">Нет шаблонов</div>';
-            return;
-        }
-        templates.forEach(t => {
-            const item = document.createElement('div');
-            item.className = 'kmod-template-item';
-            item.innerHTML = `
-                <span class="kmod-template-command">${t.command}</span>
-                <span class="kmod-template-text">${t.text}</span>
-                <button class="kmod-template-delete" data-id="${t.id}">✕</button>
-            `;
-            const del = item.querySelector('.kmod-template-delete') as HTMLButtonElement | null;
-            del?.addEventListener('click', () => {
-                if (confirm(`Удалить шаблон "${t.command}"?`)) {
-                    removeTemplate(t.id);
-                    renderTemplates();
-                }
-            });
-            list.appendChild(item);
-        });
-    };
-    renderTemplates();
+    renderTemplatesList(list);
     section.appendChild(list);
 
     const form = document.createElement('div');
@@ -453,7 +527,7 @@ function createChatsSection(): HTMLElement {
         cmdInput.value = '';
         textInput.value = '';
         form.style.display = 'none';
-        renderTemplates();
+        renderTemplatesList(list);
     };
     formBtns.appendChild(saveBtn);
 
@@ -484,6 +558,10 @@ function createChatsSection(): HTMLElement {
 
     return section;
 }
+
+// ============================================================
+// SECTIONS
+// ============================================================
 
 function createSection(key: string): HTMLElement {
     if (key === 'chats') {
@@ -526,8 +604,7 @@ function createSection(key: string): HTMLElement {
     section.appendChild(featuresContainer);
 
     if (key === 'appearance') {
-        const fontBlock = createFontSelector();
-        section.appendChild(fontBlock);
+        section.appendChild(createFontSelector());
     }
 
     return section;
@@ -571,116 +648,8 @@ function createLanguageSection(): HTMLElement {
     select.value = getCurrentLocale();
 
     select.addEventListener('change', () => {
-        const lang = select.value as 'ru' | 'en';
-        setLocale(lang);
-        const win = section.closest('.kmod-settings-window') as HTMLElement | null;
-        if (win) updateAllTexts(win);
-        const items = win?.querySelectorAll('.kmod-feature-item');
-        if (items) {
-            for (const item of items) {
-                const badge = item.querySelector('.status-badge');
-                const switchBtn = item.querySelector('.kmod-switch');
-                if (badge && switchBtn) {
-                    const isOn = switchBtn.classList.contains('active');
-                    badge.textContent = isOn ? getLocale('statusEnabled') : getLocale('statusDisabled');
-                    badge.className = `status-badge ${isOn ? 'on' : 'off'}`;
-                }
-            }
-        }
-        const fontSelect = win?.querySelector('.kmod-font-select') as HTMLSelectElement | null;
-        if (fontSelect) {
-            const currentValue = fontSelect.value;
-            fontSelect.innerHTML = '';
-            const groups = [
-                { label: 'Системные', fonts: systemFonts },
-                { label: 'Google Fonts', fonts: googleFonts },
-            ];
-            for (const group of groups) {
-                // if (!group.fonts || group.fonts.length === 0) continue;
-                const optgroup = document.createElement('optgroup');
-                optgroup.label = group.label;
-                for (const font of group.fonts) {
-                    const option = document.createElement('option');
-                    option.value = font.label;
-                    const labelKey = `fontFamily${font.label.replace(/[^a-zA-Z]/g, '')}`;
-                    const localized = getLocale(labelKey as any);
-                    option.textContent = (localized && localized !== labelKey) ? localized : font.label;
-                    if (font.label === currentValue) option.selected = true;
-                    optgroup.appendChild(option);
-                }
-                fontSelect.appendChild(optgroup);
-            }
-        }
-
-        const preview = win?.querySelector('.kmod-tags-preview');
-        if (preview) {
-            const tags = getAllTags();
-            preview.innerHTML = '';
-            if (tags.length === 0) {
-                preview.innerHTML = '<span style="color:rgba(255,255,255,0.2);font-size:13px;">Нет тегов</span>';
-            } else {
-                tags.forEach(t => {
-                    const el = document.createElement('span');
-                    el.className = 'kmod-tag-preview-item';
-                    el.style.backgroundColor = t.color;
-                    el.textContent = t.tagName;
-                    preview.appendChild(el);
-                });
-            }
-        }
-
-        const list = win?.querySelector('#kmod-templates-list');
-        if (list) {
-            const templates = getAllTemplates();
-            list.innerHTML = '';
-            if (templates.length === 0) {
-                list.innerHTML = '<div style="text-align:center;color:rgba(255,255,255,0.15);padding:8px 0;font-size:13px;">Нет шаблонов</div>';
-            } else {
-                templates.forEach(t => {
-                    const item = document.createElement('div');
-                    item.className = 'kmod-template-item';
-                    item.innerHTML = `
-                        <span class="kmod-template-command">${t.command}</span>
-                        <span class="kmod-template-text">${t.text}</span>
-                        <button class="kmod-template-delete" data-id="${t.id}">✕</button>
-                    `;
-                    const del = item.querySelector('.kmod-template-delete') as HTMLButtonElement | null;
-                    del?.addEventListener('click', () => {
-                        if (confirm(`Удалить шаблон "${t.command}"?`)) {
-                            removeTemplate(t.id);
-                            const newList = win?.querySelector('#kmod-templates-list');
-                            if (newList) {
-                                const newTemplates = getAllTemplates();
-                                newList.innerHTML = '';
-                                if (newTemplates.length === 0) {
-                                    newList.innerHTML = '<div style="text-align:center;color:rgba(255,255,255,0.15);padding:8px 0;font-size:13px;">Нет шаблонов</div>';
-                                } else {
-                                    newTemplates.forEach(nt => {
-                                        const nel = document.createElement('div');
-                                        nel.className = 'kmod-template-item';
-                                        nel.innerHTML = `
-                                            <span class="kmod-template-command">${nt.command}</span>
-                                            <span class="kmod-template-text">${nt.text}</span>
-                                            <button class="kmod-template-delete" data-id="${nt.id}">✕</button>
-                                        `;
-                                        const ndel = nel.querySelector('.kmod-template-delete') as HTMLButtonElement | null;
-                                        ndel?.addEventListener('click', () => {
-                                            if (confirm(`Удалить шаблон "${nt.command}"?`)) {
-                                                removeTemplate(nt.id);
-                                                closeModal();
-                                                setTimeout(openSettingsModal, 150);
-                                            }
-                                        });
-                                        newList.appendChild(nel);
-                                    });
-                                }
-                            }
-                        }
-                    });
-                    list.appendChild(item);
-                });
-            }
-        }
+        setLocale(select.value as 'ru' | 'en');
+        // The onLocaleChange listener will call refreshModalUI.
     });
 
     row.appendChild(select);
@@ -721,6 +690,10 @@ function createAboutSection(): HTMLElement {
     return section;
 }
 
+// ============================================================
+// MODAL LIFECYCLE
+// ============================================================
+
 let currentOverlay: HTMLDivElement | null = null;
 let unwatchLocale: (() => void) | null = null;
 let currentWindow: HTMLElement | null = null;
@@ -747,6 +720,7 @@ function buildModal(): void {
     windowEl.className = 'kmod-settings-window';
     currentWindow = windowEl;
 
+    // Header
     const header = document.createElement('div');
     header.className = 'kmod-settings-header';
 
@@ -772,6 +746,7 @@ function buildModal(): void {
     header.appendChild(title);
     header.appendChild(closeBtn);
 
+    // Body
     const body = document.createElement('div');
     body.className = 'kmod-settings-body';
 
@@ -820,6 +795,7 @@ function buildModal(): void {
     body.appendChild(sidebar);
     body.appendChild(content);
 
+    // Footer
     const footer = document.createElement('div');
     footer.className = 'kmod-settings-footer';
 
@@ -844,6 +820,7 @@ function buildModal(): void {
     resetBtn.addEventListener('click', () => {
         if (confirm(getLocale('resetConfirm'))) {
             storage.resetToDefaults();
+            invalidateEnabledCache();
             location.reload();
         }
     });
@@ -875,117 +852,10 @@ function buildModal(): void {
     };
     document.addEventListener('keydown', escHandler);
 
+    // Locale change → one call to refresh everything
     unwatchLocale = onLocaleChange(() => {
         if (!currentWindow) return;
-
-        updateAllTexts(currentWindow);
-        const items = currentWindow.querySelectorAll('.kmod-feature-item');
-        for (const item of items) {
-            const badge = item.querySelector('.status-badge');
-            const switchBtn = item.querySelector('.kmod-switch');
-            if (badge && switchBtn) {
-                const isOn = switchBtn.classList.contains('active');
-                badge.textContent = isOn ? getLocale('statusEnabled') : getLocale('statusDisabled');
-                badge.className = `status-badge ${isOn ? 'on' : 'off'}`;
-            }
-        }
-        const select = currentWindow.querySelector('.kmod-language-row select') as HTMLSelectElement | null;
-        if (select) select.value = getCurrentLocale();
-
-        const fontSelect = currentWindow.querySelector('.kmod-font-select') as HTMLSelectElement | null;
-        if (fontSelect) {
-            const currentValue = fontSelect.value;
-            fontSelect.innerHTML = '';
-            const groups = [
-                { label: 'Системные', fonts: systemFonts },
-                { label: 'Google Fonts', fonts: googleFonts },
-            ];
-            for (const group of groups) {
-                // if (!group.fonts || group.fonts.length === 0) continue;
-                const optgroup = document.createElement('optgroup');
-                optgroup.label = group.label;
-                for (const font of group.fonts) {
-                    const option = document.createElement('option');
-                    option.value = font.label;
-                    const labelKey = `fontFamily${font.label.replace(/[^a-zA-Z]/g, '')}`;
-                    const localized = getLocale(labelKey as any);
-                    option.textContent = (localized && localized !== labelKey) ? localized : font.label;
-                    if (font.label === currentValue) option.selected = true;
-                    optgroup.appendChild(option);
-                }
-                fontSelect.appendChild(optgroup);
-            }
-        }
-
-        const preview = currentWindow.querySelector('.kmod-tags-preview');
-        if (preview) {
-            const tags = getAllTags();
-            preview.innerHTML = '';
-            if (tags.length === 0) {
-                preview.innerHTML = '<span style="color:rgba(255,255,255,0.2);font-size:13px;">Нет тегов</span>';
-            } else {
-                tags.forEach(t => {
-                    const el = document.createElement('span');
-                    el.className = 'kmod-tag-preview-item';
-                    el.style.backgroundColor = t.color;
-                    el.textContent = t.tagName;
-                    preview.appendChild(el);
-                });
-            }
-        }
-
-        const list = currentWindow.querySelector('#kmod-templates-list');
-        if (list) {
-            const templates = getAllTemplates();
-            list.innerHTML = '';
-            if (templates.length === 0) {
-                list.innerHTML = '<div style="text-align:center;color:rgba(255,255,255,0.15);padding:8px 0;font-size:13px;">Нет шаблонов</div>';
-            } else {
-                templates.forEach(t => {
-                    const item = document.createElement('div');
-                    item.className = 'kmod-template-item';
-                    item.innerHTML = `
-                        <span class="kmod-template-command">${t.command}</span>
-                        <span class="kmod-template-text">${t.text}</span>
-                        <button class="kmod-template-delete" data-id="${t.id}">✕</button>
-                    `;
-                    const del = item.querySelector('.kmod-template-delete') as HTMLButtonElement | null;
-                    del?.addEventListener('click', () => {
-                        if (confirm(`Удалить шаблон "${t.command}"?`)) {
-                            removeTemplate(t.id);
-                            const newList = currentWindow?.querySelector('#kmod-templates-list');
-                            if (newList) {
-                                const newTemplates = getAllTemplates();
-                                newList.innerHTML = '';
-                                if (newTemplates.length === 0) {
-                                    newList.innerHTML = '<div style="text-align:center;color:rgba(255,255,255,0.15);padding:8px 0;font-size:13px;">Нет шаблонов</div>';
-                                } else {
-                                    newTemplates.forEach(nt => {
-                                        const nel = document.createElement('div');
-                                        nel.className = 'kmod-template-item';
-                                        nel.innerHTML = `
-                                            <span class="kmod-template-command">${nt.command}</span>
-                                            <span class="kmod-template-text">${nt.text}</span>
-                                            <button class="kmod-template-delete" data-id="${nt.id}">✕</button>
-                                        `;
-                                        const ndel = nel.querySelector('.kmod-template-delete') as HTMLButtonElement | null;
-                                        ndel?.addEventListener('click', () => {
-                                            if (confirm(`Удалить шаблон "${nt.command}"?`)) {
-                                                removeTemplate(nt.id);
-                                                closeModal();
-                                                setTimeout(openSettingsModal, 150);
-                                            }
-                                        });
-                                        newList.appendChild(nel);
-                                    });
-                                }
-                            }
-                        }
-                    });
-                    list.appendChild(item);
-                });
-            }
-        }
+        refreshModalUI(currentWindow);
     });
 
     document.body.appendChild(overlay);
