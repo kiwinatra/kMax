@@ -1,7 +1,11 @@
 /*
 * @author: potemk.in
 * @brief: Creates the "Settings" button in the sidebar next to the native settings tab.
-* @desc: Subscribes to the centralized DOM observer via watchDOM with a selector filter, so it only reacts when the header title or settings container appears. Idempotent — safe to call on every batch. No local MutationObserver, no debounce timers.
+* @desc: Subscribes to the centralized DOM observer WITHOUT a selector filter.
+*       Reason: Svelte re-creates the .settingsTab node with a different hash
+*       class on every navigation to Settings, so filtering by the old hash
+*       class would miss the new node. The callback is idempotent, so being
+*       called on every batch is cheap and safe.
 */
 
 import { createElement } from '../core/dom';
@@ -119,18 +123,18 @@ export function removeButtons(): void {
 // ============================================================
 
 /**
- * Subscribe to the centralized observer. Reacts only when the sidebar header
- * or the settings container appears/changes. Idempotent and cheap.
+ * Subscribe to the centralized observer.
+ * No selector filter — Svelte changes the .settingsTab hash class on each
+ * navigation, so filter-based subscription would miss the new container.
+ * The callback is idempotent (createSettingsButton checks for an existing
+ * button before appending), so being called on every batch is cheap.
  */
 export function waitForSettingsAndCreateButtons(): void {
     if (unwatch) return;
 
-    unwatch = watchDOM(
-        () => {
-            createSettingsButton();
-        },
-        [`#${HEADER_ID}`, SETTINGS_CONTAINER_SELECTOR, SETTINGS_CONTAINER_FALLBACK]
-    );
+    unwatch = watchDOM(() => {
+        createSettingsButton();
+    });
 
     // Immediate attempt for already-rendered DOM.
     createSettingsButton();
