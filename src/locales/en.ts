@@ -146,4 +146,6 @@ export const en: Locale = {
     fontFamilyJetBrainsMono: 'JetBrains Mono',
     fontFamilyCaveat: 'Caveat',
     fontFamilyMarckScript: 'Marck Script',
+    checkUpdatesButton: 'Check for updates',
+    checkUpdatesNoLoader: 'You are not running through the loader. Update manually.',
 };

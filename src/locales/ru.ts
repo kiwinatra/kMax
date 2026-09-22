@@ -145,4 +145,6 @@ export const ru: Locale = {
     fontFamilyJetBrainsMono: 'JetBrains Mono',
     fontFamilyCaveat: 'Caveat',
     fontFamilyMarckScript: 'Marck Script',
+    checkUpdatesButton: 'Проверить обновления',
+    checkUpdatesNoLoader: 'Вы загружаетесь не через загрузчик. Обновляйтесь вручную.',
 };

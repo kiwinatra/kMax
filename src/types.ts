@@ -162,6 +162,9 @@ export interface Locale {
     fontFamilyJetBrainsMono: string;
     fontFamilyCaveat: string;
     fontFamilyMarckScript: string;
+    checkUpdatesButton: string;
+    checkUpdatesNoLoader: string;
+
 }
 
 export type LocaleKey = keyof Locale;
@@ -417,6 +420,9 @@ const LOCALE_SAMPLE: Locale = {
     fontFamilyJetBrainsMono: '',
     fontFamilyCaveat: '',
     fontFamilyMarckScript: '',
+    checkUpdatesNoLoader: '',
+    checkUpdatesButton: '',
+
 };
 
 const LOCALE_KEY_SET: Set<string> = new Set(Object.keys(LOCALE_SAMPLE));

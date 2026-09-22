@@ -686,6 +686,25 @@ function createAboutSection(): HTMLElement {
         <div class="desc">${getLocale('aboutDescription')}</div>
     `;
     section.appendChild(content);
+        const updateBtn = document.createElement('button');
+    updateBtn.className = 'btn-check-updates';
+    updateBtn.setAttribute('data-i18n', 'checkUpdatesButton');
+    updateBtn.textContent = getLocale('checkUpdatesButton');
+    updateBtn.style.cssText = `
+        margin-top:16px;padding:10px 18px;background:rgba(255,255,255,0.06);
+        border:1px solid rgba(255,255,255,0.08);color:#f0f0f0;border-radius:10px;
+        cursor:pointer;font-size:14px;font-weight:700;width:100%;transition:all .2s;
+    `;
+    updateBtn.addEventListener('click', () => {
+        const forceUpdate = (window as any).__kmaxForceUpdate;
+        if (typeof forceUpdate !== 'function') {
+            alert(getLocale('checkUpdatesNoLoader'));
+            return;
+        }
+        forceUpdate();
+        setTimeout(() => location.reload(), 3000);
+    });
+    section.appendChild(updateBtn);
 
     return section;
 }
