@@ -29,7 +29,7 @@ import { FEATURES } from './registry';
 import { whenIdle } from './core/performance';
 import { applyStoredFont } from './features/changeFont';
 import { dumpScripts } from './features/dumpScripts';
-import { saveSelfSha } from './core/updater';
+
 
 // ============================================================
 // STATE
@@ -141,7 +141,6 @@ async function doInit(): Promise<void> {
 
     setupGlobalAPI();
     applyStoredFont();
-    saveSelfSha();
     hideLoader();
 
     logger.info('✅ Mod initialized');
