@@ -1,8 +1,10 @@
 /*
 * @author: potemk.in
 * @brief: Utility script for building the kMax Mod and emulating its execution in Node.js.
-* @desc: This file provides build utilities including bundling with esbuild, minification, sourcemap generation, Tampermonkey header injection, watch mode, cleaning, build statistics, and a simple Node.js emulation mode for testing the mod structure without jsdom.
-*       Now also computes a SHA-256 of the final output (with TM header) and injects it into the bundle as __BUILD_SHA__, so the mod can detect remote updates by comparing against the raw GitHub file.
+* @desc: Bundles with esbuild, injects a self-SHA into the output, prepends the Tampermonkey header,
+*        and supports watch / clean / stats / emulate. The self-SHA is computed from the bundle
+*        with the SHA marker region collapsed to an empty string, so both build-time and runtime
+*        can reproduce the exact same hash without needing a fixed point.
 */
 
 import { execSync } from 'child_process';
@@ -18,6 +20,20 @@ const rootDir = path.resolve(__dirname, '..');
 const buildDir = path.join(rootDir, 'build');
 const outputFile = path.join(buildDir, 'mod.user.js');
 const outputMinFile = path.join(buildDir, 'mod.min.user.js');
+
+// ============================================================
+// SELF-SHA MARKER
+// ------------------------------------------------------------
+// esbuild injects the placeholder between these two markers.
+// After bundling, we collapse the region and hash the result.
+// checkForUpdate() at runtime does the exact same collapse,
+// so the hash always matches.
+// ============================================================
+
+const SHA_START = '__KMOD_SHA_START__';
+const SHA_END = '__KMOD_SHA_END__';
+const SHA_STUB = `${SHA_START}${SHA_END}`;
+const SHA_REGEX = new RegExp(`${SHA_START}[^"]*${SHA_END}`, 'g');
 
 function ensureBuildDir(): void {
     if (!fs.existsSync(buildDir)) {
@@ -42,7 +58,7 @@ function getConfig(): { name: string; version: string; author: string; site: str
             author: authorMatch ? authorMatch[1] : 'kMax Team',
             site: siteMatch ? siteMatch[1] : 'max.ru',
         };
-    } catch (error) {
+    } catch {
         console.warn('⚠️ Could not read config.ts, using fallback values');
         return {
             name: 'kMax Mod',
@@ -55,8 +71,7 @@ function getConfig(): { name: string; version: string; author: string; site: str
 
 function getFileSize(filePath: string): string {
     try {
-        const stats = fs.statSync(filePath);
-        return (stats.size / 1024).toFixed(2);
+        return (fs.statSync(filePath).size / 1024).toFixed(2);
     } catch {
         return '0';
     }
@@ -81,20 +96,16 @@ function createTampermonkeyHeader(): string {
 
 /** SHA-256 of a file's raw bytes → hex string. */
 function computeFileSha(filePath: string): string {
-    const buf = fs.readFileSync(filePath);
-    return crypto.createHash('sha256').update(buf).digest('hex');
+    return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
 }
 
-/**
- * Strip sourcemap comment (we hash the same content GitHub would serve —
- * but since we ALSO commit the sourcemap-less min file to the repo,
- * it's fine to keep hashing exactly what's on disk).
- */
-function readFileRaw(filePath: string): string {
-    return fs.readFileSync(filePath, 'utf-8');
+/** Collapse the SHA marker region, then hash. Used both here and at runtime. */
+function computeStubSha(content: string): string {
+    const stub = content.replace(SHA_REGEX, SHA_STUB);
+    return crypto.createHash('sha256').update(stub, 'utf-8').digest('hex');
 }
 
-function build({ minify = true, sourcemap = true, watch = false } = {}): string | undefined {
+function build({ minify = true, sourcemap = false, watch = false } = {}): string | undefined {
     console.log(`🔨 Building kmod... (minify: ${minify}, sourcemap: ${sourcemap})`);
 
     try {
@@ -102,9 +113,10 @@ function build({ minify = true, sourcemap = true, watch = false } = {}): string 
 
         const outfile = minify ? outputMinFile : outputFile;
 
-        // We need a SHA placeholder BEFORE esbuild runs, so the bundle
-        // can reference __BUILD_SHA__. On watch mode we just re-define
-        // it every rebuild.
+        // The value we inject must be a valid JS string literal (with quotes).
+        // We wrap it between markers so runtime can find and collapse it.
+        const defineValue = JSON.stringify(`${SHA_START}PLACEHOLDER${SHA_END}`);
+
         const command = [
             'esbuild',
             'src/main.ts',
@@ -116,59 +128,33 @@ function build({ minify = true, sourcemap = true, watch = false } = {}): string 
             '--platform=browser',
             '--target=es2020',
             '--legal-comments=none',
-            `--define:__BUILD_SHA__="'__SHA_PLACEHOLDER__'"`,
+            `--define:__BUILD_SHA__=${defineValue}`,
             watch ? '--watch' : '',
         ].filter(Boolean).join(' ');
 
         console.log(`📦 Running: ${command}`);
         execSync(command, { stdio: 'inherit', cwd: rootDir });
 
-        // Prepend TM header
-        const content = readFileRaw(outfile);
+        // Prepend Tampermonkey header
+        const bundle = fs.readFileSync(outfile, 'utf-8');
         const header = createTampermonkeyHeader();
-        fs.writeFileSync(outfile, header + content);
+        let content = header + bundle;
 
-        // Compute SHA of the FINAL file (header + body), because that's
-        // exactly what sits in the repo and what we compare against.
-        const finalSha = computeFileSha(outfile);
+        // Compute SHA from the collapsed stub (marker region → empty)
+        const sha = computeStubSha(content);
 
-        // Now rewrite the placeholder with the real SHA.
-        // NOTE: this changes the file, so the SHA we just computed no longer
-        // matches the file on disk. That's a chicken-and-egg problem:
-        // we want the SHA of the file WITH the real SHA inside.
-        // Solution: iterate until stable. In practice 2 passes are enough,
-        // but we loop with a cap to be safe.
-        let currentSha = finalSha;
-        let previousSha = '';
-        let passes = 0;
-        const MAX_PASSES = 5;
+        // Inject the real SHA into the marker region
+        content = content.replace(SHA_REGEX, `${SHA_START}${sha}${SHA_END}`);
+        fs.writeFileSync(outfile, content);
 
-        while (previousSha !== currentSha && passes < MAX_PASSES) {
-            previousSha = currentSha;
-
-            const withHeader = readFileRaw(outfile).replace(
-                /__SHA_PLACEHOLDER__/g,
-                previousSha
-            );
-            fs.writeFileSync(outfile, withHeader);
-
-            currentSha = computeFileSha(outfile);
-            passes++;
-        }
-
-        console.log(`🔑 Self SHA-256: ${currentSha}`);
-        console.log(`   (stabilized in ${passes} pass${passes === 1 ? '' : 'es'})`);
-
-        const size = getFileSize(outfile);
-        console.log(`✅ Build complete: ${outfile} (${size} KB)`);
+        console.log(`🔑 Self SHA-256: ${sha}`);
+        console.log(`✅ Build complete: ${outfile} (${getFileSize(outfile)} KB)`);
 
         if (minify && fs.existsSync(outputMinFile)) {
-            const minSize = getFileSize(outputMinFile);
-            console.log(`📊 Minified: ${outputMinFile} (${minSize} KB)`);
+            console.log(`📊 Minified: ${outputMinFile} (${getFileSize(outputMinFile)} KB)`);
         }
 
         return outfile;
-
     } catch (error) {
         console.error('❌ Build failed:', error);
         process.exit(1);
@@ -182,15 +168,12 @@ function watch(): void {
 
 function clean(): void {
     console.log('🧹 Cleaning build directory...');
-
     if (fs.existsSync(buildDir)) {
         const files = fs.readdirSync(buildDir);
-        let count = 0;
         for (const file of files) {
             fs.rmSync(path.join(buildDir, file), { recursive: true, force: true });
-            count++;
         }
-        console.log(`✅ Clean complete: ${count} files removed`);
+        console.log(`✅ Clean complete: ${files.length} files removed`);
     } else {
         console.log('ℹ️  Build directory does not exist');
     }
@@ -211,33 +194,23 @@ function devBuild(): void {
 
 function headerOnly(): void {
     console.log('📝 Creating Tampermonkey header...');
-
     const header = createTampermonkeyHeader();
-
-    const files = [
-        { path: outputMinFile, label: 'minified' },
-        { path: outputFile, label: 'source' },
-    ];
-
+    const files = [outputMinFile, outputFile];
     let found = false;
     for (const file of files) {
-        if (fs.existsSync(file.path)) {
-            const content = fs.readFileSync(file.path, 'utf-8');
-            const cleanContent = content.replace(/\/\/ ==UserScript==[\s\S]*?\/\/ ==\/UserScript==\n\n/, '');
-            fs.writeFileSync(file.path, header + cleanContent);
-            console.log(`✅ Header added to: ${file.path}`);
+        if (fs.existsSync(file)) {
+            const content = fs.readFileSync(file, 'utf-8');
+            const clean = content.replace(/\/\/ ==UserScript==[\s\S]*?\/\/ ==\/UserScript==\n\n/, '');
+            fs.writeFileSync(file, header + clean);
+            console.log(`✅ Header added to: ${file}`);
             found = true;
         }
     }
-
-    if (!found) {
-        console.log('⚠️  No build file found. Run "npm run build" first.');
-    }
+    if (!found) console.log('⚠️  No build file found. Run "npm run build" first.');
 }
 
 function stats(): void {
     console.log('📊 Build statistics:');
-
     const config = getConfig();
     console.log(`  Name: ${config.name}`);
     console.log(`  Version: ${config.version}`);
@@ -249,235 +222,112 @@ function stats(): void {
         { path: outputFile, label: 'Source' },
     ];
 
-    let totalSize = 0;
+    let total = 0;
     for (const file of files) {
         if (fs.existsSync(file.path)) {
-            const size = getFileSize(file.path);
-            const stats = fs.statSync(file.path);
-            console.log(`  ${file.label}: ${size} KB (${stats.size} bytes)`);
-            totalSize += stats.size;
-
-            // Show SHA of each present file
-            try {
-                const sha = computeFileSha(file.path);
-                console.log(`    SHA-256: ${sha}`);
-            } catch { /* ignore */ }
+            const size = fs.statSync(file.path).size;
+            total += size;
+            console.log(`  ${file.label}: ${(size / 1024).toFixed(2)} KB (${size} bytes)`);
+            console.log(`    SHA-256 (full): ${computeFileSha(file.path)}`);
+            const stubSha = computeStubSha(fs.readFileSync(file.path, 'utf-8'));
+            console.log(`    SHA-256 (stub): ${stubSha}`);
         } else {
             console.log(`  ${file.label}: not found`);
         }
     }
-
-    if (totalSize > 0) {
-        console.log(`  Total: ${(totalSize / 1024).toFixed(2)} KB`);
-    }
+    if (total > 0) console.log(`  Total: ${(total / 1024).toFixed(2)} KB`);
 }
 
 async function emulate(): Promise<void> {
     console.log('🚀 Emulating mod in Node.js...');
-
     const config = getConfig();
     console.log(`📋 Config: ${config.name} v${config.version}`);
 
-    const buildFile = outputMinFile;
-    if (!fs.existsSync(buildFile)) {
+    if (!fs.existsSync(outputMinFile)) {
         console.log('⚠️ Build file not found. Building first...');
         build({ minify: true, sourcemap: false });
     }
 
     try {
-        console.log('🔄 Loading mod...');
-
-        const modCode = fs.readFileSync(buildFile, 'utf-8');
-
+        const modCode = fs.readFileSync(outputMinFile, 'utf-8');
         const vm = await import('vm');
-
-        const eventListeners: Map<string, Function[]> = new Map();
+        const listeners: Map<string, Function[]> = new Map();
 
         const context: any = {
-            console: console,
-            setTimeout: setTimeout,
-            clearTimeout: clearTimeout,
-            setInterval: setInterval,
-            clearInterval: clearInterval,
+            console, setTimeout, clearTimeout, setInterval, clearInterval,
             window: {
-                addEventListener: (event: string, handler: Function) => {
-                    if (!eventListeners.has(event)) {
-                        eventListeners.set(event, []);
-                    }
-                    eventListeners.get(event)!.push(handler);
+                addEventListener: (e: string, h: Function) => {
+                    if (!listeners.has(e)) listeners.set(e, []);
+                    listeners.get(e)!.push(h);
                 },
-                removeEventListener: (event: string, handler: Function) => {
-                    if (eventListeners.has(event)) {
-                        const handlers = eventListeners.get(event)!;
-                        const index = handlers.indexOf(handler);
-                        if (index !== -1) {
-                            handlers.splice(index, 1);
-                        }
-                    }
-                },
-                dispatchEvent: (event: any) => {
-                    const handlers = eventListeners.get(event.type || '');
-                    if (handlers) {
-                        for (const handler of handlers) {
-                            handler(event);
-                        }
-                    }
-                },
-                location: {
-                    hostname: 'max.ru',
-                    href: 'https://max.ru/',
-                    pathname: '/',
-                    search: '',
-                    hash: '',
-                },
+                removeEventListener: () => {},
+                dispatchEvent: () => {},
+                location: { hostname: 'max.ru', href: 'https://max.ru/', pathname: '/', search: '', hash: '' },
                 open: () => ({ document: { write: () => {}, close: () => {} }, focus: () => {} }),
-                setTimeout: setTimeout,
-                clearTimeout: clearTimeout,
-                setInterval: setInterval,
-                clearInterval: clearInterval,
+                setTimeout, clearTimeout, setInterval, clearInterval,
                 requestAnimationFrame: (cb: any) => setTimeout(cb, 16),
                 cancelAnimationFrame: (id: any) => clearTimeout(id),
-                performance: {
-                    now: () => Date.now(),
-                },
-                navigator: {
-                    userAgent: 'Node.js',
-                },
+                performance: { now: () => Date.now() },
+                navigator: { userAgent: 'Node.js' },
             },
             document: {
-                createElement: (tag: string) => ({
+                createElement: () => ({
                     style: {},
                     classList: { add: () => {}, remove: () => {}, contains: () => false },
-                    appendChild: () => {},
-                    remove: () => {},
-                    addEventListener: () => {},
-                    removeEventListener: () => {},
-                    setAttribute: () => {},
-                    getAttribute: () => null,
-                    textContent: '',
-                    innerHTML: '',
-                    querySelector: () => null,
-                    querySelectorAll: () => [],
-                    getElementById: () => null,
+                    appendChild: () => {}, remove: () => {},
+                    addEventListener: () => {}, removeEventListener: () => {},
+                    setAttribute: () => {}, getAttribute: () => null,
+                    textContent: '', innerHTML: '',
+                    querySelector: () => null, querySelectorAll: () => [], getElementById: () => null,
                 }),
                 querySelector: () => null,
                 querySelectorAll: () => [],
                 getElementById: () => null,
-                body: {
-                    appendChild: () => {},
-                    querySelector: () => null,
-                    querySelectorAll: () => [],
+                body: { appendChild: () => {}, querySelector: () => null, querySelectorAll: () => [] },
+                head: { appendChild: () => {}, querySelector: () => null, querySelectorAll: () => [] },
+                documentElement: { dataset: {} },
+                addEventListener: (e: string, h: Function) => {
+                    if (!listeners.has(e)) listeners.set(e, []);
+                    listeners.get(e)!.push(h);
                 },
-                head: {
-                    appendChild: () => {},
-                    querySelector: () => null,
-                    querySelectorAll: () => [],
-                },
-                documentElement: {
-                    dataset: {},
-                },
-                addEventListener: (event: string, handler: Function) => {
-                    if (!eventListeners.has(event)) {
-                        eventListeners.set(event, []);
-                    }
-                    eventListeners.get(event)!.push(handler);
-                },
-                removeEventListener: (event: string, handler: Function) => {
-                    if (eventListeners.has(event)) {
-                        const handlers = eventListeners.get(event)!;
-                        const index = handlers.indexOf(handler);
-                        if (index !== -1) {
-                            handlers.splice(index, 1);
-                        }
-                    }
-                },
-                dispatchEvent: (event: any) => {
-                    const handlers = eventListeners.get(event.type || '');
-                    if (handlers) {
-                        for (const handler of handlers) {
-                            handler(event);
-                        }
-                    }
-                },
+                removeEventListener: () => {},
+                dispatchEvent: () => {},
                 readyState: 'complete',
                 visibilityState: 'visible',
-                createTreeWalker: () => ({
-                    nextNode: () => null,
-                }),
-                createEvent: (type: string) => ({
-                    initEvent: () => {},
-                }),
-                createTextNode: (text: string) => ({ textContent: text }),
+                createTreeWalker: () => ({ nextNode: () => null }),
+                createEvent: () => ({ initEvent: () => {} }),
+                createTextNode: (t: string) => ({ textContent: t }),
             },
-            localStorage: {
-                getItem: () => null,
-                setItem: () => {},
-                removeItem: () => {},
-                clear: () => {},
-                length: 0,
-                key: () => null,
-            },
-            sessionStorage: {
-                getItem: () => null,
-                setItem: () => {},
-                removeItem: () => {},
-                clear: () => {},
-                length: 0,
-                key: () => null,
-            },
-            MutationObserver: class {
-                observe() {}
-                disconnect() {}
-            },
+            localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {}, clear: () => {}, length: 0, key: () => null },
+            sessionStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {}, clear: () => {}, length: 0, key: () => null },
+            MutationObserver: class { observe() {} disconnect() {} },
             requestAnimationFrame: (cb: any) => setTimeout(cb, 16),
             cancelAnimationFrame: (id: any) => clearTimeout(id),
-            performance: {
-                now: () => Date.now(),
-            },
-            navigator: {
-                userAgent: 'Node.js',
-            },
-            Event: class Event {
-                type: string;
-                constructor(type: string) {
-                    this.type = type;
-                }
-            },
-            CustomEvent: class CustomEvent extends Event {
-                detail: any;
-                constructor(type: string, options?: any) {
-                    super(type);
-                    this.detail = options?.detail;
-                }
-            },
-            alert: (msg: string) => console.log('[ALERT]', msg),
-            confirm: (msg: string) => { console.log('[CONFIRM]', msg); return true; },
-            prompt: (msg: string) => { console.log('[PROMPT]', msg); return null; },
-            __BUILD_SHA__: computeFileSha(buildFile),
+            performance: { now: () => Date.now() },
+            navigator: { userAgent: 'Node.js' },
+            Event: class { type: string; constructor(t: string) { this.type = t; } },
+            CustomEvent: class extends Event { detail: any; constructor(t: string, o?: any) { super(t); this.detail = o?.detail; } },
+            alert: (m: string) => console.log('[ALERT]', m),
+            confirm: (m: string) => { console.log('[CONFIRM]', m); return true; },
+            prompt: (m: string) => { console.log('[PROMPT]', m); return null; },
+            __BUILD_SHA__: 'dev',
         };
 
         const script = new vm.Script(`
             (function() {
-                const global = this;
                 ${modCode}
                 return typeof window !== 'undefined' && window.kmod ? window.kmod : null;
             })()
         `);
 
         const kmod = script.runInNewContext(context);
-
         if (kmod) {
             console.log('✅ Mod loaded successfully!');
             console.log('📦 Available API:', Object.keys(kmod).join(', '));
-            if (kmod.config) {
-                console.log(`📋 Config:`, kmod.config);
-            }
         } else {
             console.log('⚠️ Mod loaded but kmod API not found on window');
         }
-
         console.log('🎉 Emulation complete!');
-
     } catch (error) {
         console.error('❌ Emulation failed:', error);
         process.exit(1);
@@ -493,22 +343,15 @@ function help(): void {
 Usage: npm run utils [command]
 
 Commands:
-  build   - Build the mod (minified, with sourcemap)
+  build   - Build the mod (minified, no sourcemap)
   watch   - Watch for changes and rebuild (dev mode)
   clean   - Clean build directory
   header  - Add Tampermonkey header to existing build
-  full    - Clean + Build (production, no sourcemap)
+  full    - Clean + Build (production)
   dev     - Build without minification (debug)
   stats   - Show build statistics (incl. SHA-256)
-  emulate - Emulate the mod in Node.js (no jsdom required)
+  emulate - Emulate the mod in Node.js
   help    - Show this help
-
-Examples:
-  npm run utils build          # Quick build
-  npm run utils full           # Full production build
-  npm run utils watch          # Watch mode
-  npm run utils dev            # Dev build with sourcemap
-  npm run utils emulate        # Test mod in Node.js
 `);
 }
 
@@ -516,35 +359,17 @@ const args = process.argv.slice(2);
 const command = args[0] || 'build';
 
 switch (command) {
-    case 'build':
-        build({ minify: true, sourcemap: false });
-        break;
-    case 'watch':
-        watch();
-        break;
-    case 'clean':
-        clean();
-        break;
-    case 'header':
-        headerOnly();
-        break;
-    case 'full':
-        fullBuild();
-        break;
-    case 'dev':
-        devBuild();
-        break;
-    case 'stats':
-        stats();
-        break;
-    case 'emulate':
-        emulate();
-        break;
+    case 'build':  build({ minify: true, sourcemap: false }); break;
+    case 'watch':  watch(); break;
+    case 'clean':  clean(); break;
+    case 'header': headerOnly(); break;
+    case 'full':   fullBuild(); break;
+    case 'dev':    devBuild(); break;
+    case 'stats':  stats(); break;
+    case 'emulate': emulate(); break;
     case 'help':
     case '--help':
-    case '-h':
-        help();
-        break;
+    case '-h':     help(); break;
     default:
         console.log(`❌ Unknown command: ${command}`);
         help();

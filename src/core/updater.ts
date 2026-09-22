@@ -1,21 +1,27 @@
 /*
 * @author: potemk.in
 * @brief: Self-update checker — compares local bundle SHA against the remote raw file.
-* @desc: SHA of the current build is injected at build time via esbuild --define:__BUILD_SHA__.
-*       On init we persist it to storage. On demand we fetch the raw GitHub file,
-*       hash it the same way, and compare.
+* @desc: The SHA is injected at build time between two markers (__KMOD_SHA_START__/__KMOD_SHA_END__).
+*        Both build.ts and this file collapse that marker region to an empty stub before hashing,
+*        so the runtime hash and the build-time hash always match — regardless of the SHA value itself.
 */
 
 import { storage } from './storage';
 import { logger } from './logger';
-
+import type { StorageKey } from '../types';
 
 const UPDATE_URL =
     'https://raw.githubusercontent.com/kiwinatra/kmax-builds/main/mod.min.user.js';
 
-const SELF_SHA_KEY = 'selfSha';
+const SELF_SHA_KEY: StorageKey = 'selfSha';
 
-/** SHA текущего билда. Fallback на 'dev', если билд без --define (ts-node, тесты). */
+// Must match the markers used in build.ts exactly.
+const SHA_START = '__KMOD_SHA_START__';
+const SHA_END = '__KMOD_SHA_END__';
+const SHA_STUB = `${SHA_START}${SHA_END}`;
+const SHA_REGEX = new RegExp(`${SHA_START}[^"]*${SHA_END}`, 'g');
+
+/** Встроенный SHA из бандла. Fallback на 'dev', если билд без --define. */
 const SELF_SHA: string =
     typeof __BUILD_SHA__ !== 'undefined' ? __BUILD_SHA__ : 'dev';
 
@@ -40,6 +46,11 @@ async function sha256Hex(text: string): Promise<string> {
         .join('');
 }
 
+/** Заменить маркерный регион на пустой стаб — так же, как в build.ts. */
+function collapseStub(text: string): string {
+    return text.replace(SHA_REGEX, SHA_STUB);
+}
+
 /**
  * true  — есть обновление
  * false — версия совпадает
@@ -58,9 +69,14 @@ export async function checkForUpdate(): Promise<boolean | null> {
             logger.warn(`Update check failed: HTTP ${res.status}`);
             return null;
         }
-        const remoteSha = await sha256Hex(await res.text());
+
+        const remoteText = await res.text();
+        const remoteStub = collapseStub(remoteText);
+        const remoteSha = await sha256Hex(remoteStub);
+
         logger.debug(`🔍 Self SHA:   ${selfSha}`);
         logger.debug(`🔍 Remote SHA: ${remoteSha}`);
+
         return remoteSha !== selfSha;
     } catch (error) {
         logger.error('Update check error:', error);
