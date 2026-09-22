@@ -116,7 +116,7 @@ function build({ minify = true, sourcemap = true, watch = false } = {}): string 
             '--platform=browser',
             '--target=es2020',
             '--legal-comments=none',
-            `--define:__BUILD_SHA__="__SHA_PLACEHOLDER__"`,
+            `--define:__BUILD_SHA__="'__SHA_PLACEHOLDER__'"`,
             watch ? '--watch' : '',
         ].filter(Boolean).join(' ');
 
