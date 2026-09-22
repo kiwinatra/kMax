@@ -17,7 +17,8 @@ export type StorageKey =
     | 'logView'
     | 'fontFamily'
     | 'chatTags'
-    | 'templates';
+    | 'templates'
+    | 'selfSha';
 
 interface Settings {
     hideStories: boolean;

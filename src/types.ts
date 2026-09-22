@@ -163,7 +163,12 @@ export interface Locale {
     fontFamilyCaveat: string;
     fontFamilyMarckScript: string;
     checkUpdatesButton: string;
-    checkUpdatesNoLoader: string;
+checkUpdatesChecking: string;
+checkUpdatesUpToDate: string;
+checkUpdatesAvailable: string;
+checkUpdatesFailed: string;
+checkUpdatesNoLoader: string;
+    
 
 }
 
@@ -187,7 +192,8 @@ export type StorageKey =
     | 'logView'
     | 'fontFamily'
     | 'chatTags'
-    | 'templates';
+    | 'templates'
+    | 'selfSha';
 
 // ============================================================
 // FEATURES
@@ -307,6 +313,7 @@ const STORAGE_KEY_SET: Set<string> = new Set([
     'fontFamily',
     'chatTags',
     'templates',
+    'selfSha',
 ]);
 
 /** Cheap runtime check for StorageKey — no sample object allocation. */
@@ -420,8 +427,12 @@ const LOCALE_SAMPLE: Locale = {
     fontFamilyJetBrainsMono: '',
     fontFamilyCaveat: '',
     fontFamilyMarckScript: '',
-    checkUpdatesNoLoader: '',
     checkUpdatesButton: '',
+    checkUpdatesChecking: '',
+    checkUpdatesUpToDate: '',
+    checkUpdatesAvailable: '',
+    checkUpdatesFailed: '',
+    checkUpdatesNoLoader: '',
 
 };
 
@@ -429,6 +440,11 @@ const LOCALE_KEY_SET: Set<string> = new Set(Object.keys(LOCALE_SAMPLE));
 
 export function isLocaleKey(key: string): key is LocaleKey {
     return LOCALE_KEY_SET.has(key);
+}
+
+declare global {
+    /** SHA-256 of the final bundle, injected by esbuild via --define. */
+    const __BUILD_SHA__: string;
 }
 
 export default {

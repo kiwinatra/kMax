@@ -2,11 +2,13 @@
 * @author: potemk.in
 * @brief: Utility script for building the kMax Mod and emulating its execution in Node.js.
 * @desc: This file provides build utilities including bundling with esbuild, minification, sourcemap generation, Tampermonkey header injection, watch mode, cleaning, build statistics, and a simple Node.js emulation mode for testing the mod structure without jsdom.
+*       Now also computes a SHA-256 of the final output (with TM header) and injects it into the bundle as __BUILD_SHA__, so the mod can detect remote updates by comparing against the raw GitHub file.
 */
 
 import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -28,12 +30,12 @@ function getConfig(): { name: string; version: string; author: string; site: str
     try {
         const configPath = path.join(rootDir, 'src', 'config.ts');
         const content = fs.readFileSync(configPath, 'utf-8');
-        
+
         const nameMatch = content.match(/name:\s*['"]([^'"]+)['"]/);
         const versionMatch = content.match(/version:\s*['"]([^'"]+)['"]/);
         const authorMatch = content.match(/author:\s*['"]([^'"]+)['"]/);
         const siteMatch = content.match(/site:\s*['"]([^'"]+)['"]/);
-        
+
         return {
             name: nameMatch ? nameMatch[1] : 'kMax Mod',
             version: versionMatch ? versionMatch[1] : '1.0.0',
@@ -48,16 +50,6 @@ function getConfig(): { name: string; version: string; author: string; site: str
             author: 'kMax Team',
             site: 'max.ru',
         };
-    }
-}
-
-function getPackageVersion(): string {
-    try {
-        const pkgPath = path.join(rootDir, 'package.json');
-        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
-        return pkg.version || '1.0.0';
-    } catch {
-        return '1.0.0';
     }
 }
 
@@ -87,6 +79,21 @@ function createTampermonkeyHeader(): string {
 `;
 }
 
+/** SHA-256 of a file's raw bytes → hex string. */
+function computeFileSha(filePath: string): string {
+    const buf = fs.readFileSync(filePath);
+    return crypto.createHash('sha256').update(buf).digest('hex');
+}
+
+/**
+ * Strip sourcemap comment (we hash the same content GitHub would serve —
+ * but since we ALSO commit the sourcemap-less min file to the repo,
+ * it's fine to keep hashing exactly what's on disk).
+ */
+function readFileRaw(filePath: string): string {
+    return fs.readFileSync(filePath, 'utf-8');
+}
+
 function build({ minify = true, sourcemap = true, watch = false } = {}): string | undefined {
     console.log(`🔨 Building kmod... (minify: ${minify}, sourcemap: ${sourcemap})`);
 
@@ -95,6 +102,9 @@ function build({ minify = true, sourcemap = true, watch = false } = {}): string 
 
         const outfile = minify ? outputMinFile : outputFile;
 
+        // We need a SHA placeholder BEFORE esbuild runs, so the bundle
+        // can reference __BUILD_SHA__. On watch mode we just re-define
+        // it every rebuild.
         const command = [
             'esbuild',
             'src/main.ts',
@@ -106,15 +116,48 @@ function build({ minify = true, sourcemap = true, watch = false } = {}): string 
             '--platform=browser',
             '--target=es2020',
             '--legal-comments=none',
+            `--define:__BUILD_SHA__="__SHA_PLACEHOLDER__"`,
             watch ? '--watch' : '',
         ].filter(Boolean).join(' ');
 
         console.log(`📦 Running: ${command}`);
         execSync(command, { stdio: 'inherit', cwd: rootDir });
 
-        const content = fs.readFileSync(outfile, 'utf-8');
+        // Prepend TM header
+        const content = readFileRaw(outfile);
         const header = createTampermonkeyHeader();
         fs.writeFileSync(outfile, header + content);
+
+        // Compute SHA of the FINAL file (header + body), because that's
+        // exactly what sits in the repo and what we compare against.
+        const finalSha = computeFileSha(outfile);
+
+        // Now rewrite the placeholder with the real SHA.
+        // NOTE: this changes the file, so the SHA we just computed no longer
+        // matches the file on disk. That's a chicken-and-egg problem:
+        // we want the SHA of the file WITH the real SHA inside.
+        // Solution: iterate until stable. In practice 2 passes are enough,
+        // but we loop with a cap to be safe.
+        let currentSha = finalSha;
+        let previousSha = '';
+        let passes = 0;
+        const MAX_PASSES = 5;
+
+        while (previousSha !== currentSha && passes < MAX_PASSES) {
+            previousSha = currentSha;
+
+            const withHeader = readFileRaw(outfile).replace(
+                /__SHA_PLACEHOLDER__/g,
+                previousSha
+            );
+            fs.writeFileSync(outfile, withHeader);
+
+            currentSha = computeFileSha(outfile);
+            passes++;
+        }
+
+        console.log(`🔑 Self SHA-256: ${currentSha}`);
+        console.log(`   (stabilized in ${passes} pass${passes === 1 ? '' : 'es'})`);
 
         const size = getFileSize(outfile);
         console.log(`✅ Build complete: ${outfile} (${size} KB)`);
@@ -156,7 +199,7 @@ function clean(): void {
 function fullBuild(): void {
     console.log('🎯 Full build started...');
     clean();
-    build({ minify: true, sourcemap: true });
+    build({ minify: true, sourcemap: false });
     console.log('🎉 Full build complete!');
 }
 
@@ -213,6 +256,12 @@ function stats(): void {
             const stats = fs.statSync(file.path);
             console.log(`  ${file.label}: ${size} KB (${stats.size} bytes)`);
             totalSize += stats.size;
+
+            // Show SHA of each present file
+            try {
+                const sha = computeFileSha(file.path);
+                console.log(`    SHA-256: ${sha}`);
+            } catch { /* ignore */ }
         } else {
             console.log(`  ${file.label}: not found`);
         }
@@ -232,18 +281,18 @@ async function emulate(): Promise<void> {
     const buildFile = outputMinFile;
     if (!fs.existsSync(buildFile)) {
         console.log('⚠️ Build file not found. Building first...');
-        build({ minify: true, sourcemap: true });
+        build({ minify: true, sourcemap: false });
     }
 
     try {
         console.log('🔄 Loading mod...');
-        
+
         const modCode = fs.readFileSync(buildFile, 'utf-8');
-        
+
         const vm = await import('vm');
-        
+
         const eventListeners: Map<string, Function[]> = new Map();
-        
+
         const context: any = {
             console: console,
             setTimeout: setTimeout,
@@ -282,7 +331,6 @@ async function emulate(): Promise<void> {
                     hash: '',
                 },
                 open: () => ({ document: { write: () => {}, close: () => {} }, focus: () => {} }),
-                // ===== ДОБАВЛЯЕМ НЕДОСТАЮЩИЕ БРАУЗЕРНЫЕ API =====
                 setTimeout: setTimeout,
                 clearTimeout: clearTimeout,
                 setInterval: setInterval,
@@ -295,11 +343,10 @@ async function emulate(): Promise<void> {
                 navigator: {
                     userAgent: 'Node.js',
                 },
-                // ===== КОНЕЦ ДОБАВЛЕНИЙ =====
             },
             document: {
-                createElement: (tag: string) => ({ 
-                    style: {}, 
+                createElement: (tag: string) => ({
+                    style: {},
                     classList: { add: () => {}, remove: () => {}, contains: () => false },
                     appendChild: () => {},
                     remove: () => {},
@@ -406,6 +453,7 @@ async function emulate(): Promise<void> {
             alert: (msg: string) => console.log('[ALERT]', msg),
             confirm: (msg: string) => { console.log('[CONFIRM]', msg); return true; },
             prompt: (msg: string) => { console.log('[PROMPT]', msg); return null; },
+            __BUILD_SHA__: computeFileSha(buildFile),
         };
 
         const script = new vm.Script(`
@@ -449,9 +497,9 @@ Commands:
   watch   - Watch for changes and rebuild (dev mode)
   clean   - Clean build directory
   header  - Add Tampermonkey header to existing build
-  full    - Clean + Build + Header (production)
+  full    - Clean + Build (production, no sourcemap)
   dev     - Build without minification (debug)
-  stats   - Show build statistics
+  stats   - Show build statistics (incl. SHA-256)
   emulate - Emulate the mod in Node.js (no jsdom required)
   help    - Show this help
 
@@ -469,7 +517,7 @@ const command = args[0] || 'build';
 
 switch (command) {
     case 'build':
-        build({ minify: true, sourcemap: true });
+        build({ minify: true, sourcemap: false });
         break;
     case 'watch':
         watch();

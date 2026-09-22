@@ -146,5 +146,9 @@ export const ru: Locale = {
     fontFamilyCaveat: 'Caveat',
     fontFamilyMarckScript: 'Marck Script',
     checkUpdatesButton: 'Проверить обновления',
-    checkUpdatesNoLoader: 'Вы загружаетесь не через загрузчик. Обновляйтесь вручную.',
+checkUpdatesChecking: 'Проверка...',
+checkUpdatesUpToDate: 'У вас последняя версия',
+checkUpdatesAvailable: 'Доступно обновление!',
+checkUpdatesFailed: 'Не удалось проверить обновления',
+checkUpdatesNoLoader: 'Вы загружаетесь не через загрузчик. Обновляйтесь вручную.',
 };

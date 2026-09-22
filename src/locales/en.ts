@@ -147,5 +147,10 @@ export const en: Locale = {
     fontFamilyCaveat: 'Caveat',
     fontFamilyMarckScript: 'Marck Script',
     checkUpdatesButton: 'Check for updates',
-    checkUpdatesNoLoader: 'You are not running through the loader. Update manually.',
+checkUpdatesChecking: 'Checking...',
+checkUpdatesUpToDate: 'You are up to date',
+checkUpdatesAvailable: 'Update available!',
+checkUpdatesFailed: 'Failed to check for updates',
+checkUpdatesNoLoader: 'You are not running through the loader. Update manually.',
+
 };

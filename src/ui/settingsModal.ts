@@ -23,7 +23,7 @@ import {
 import { openTagManager } from '../features/chatTags/ui';
 import { getAllTags } from '../features/chatTags/storage';
 import { getAllTemplates, addTemplate, removeTemplate, generateTemplateId } from '../features/templates/storage';
-
+import { checkForUpdate } from '../core/updater';
 
 const ANIMATION_DURATION = 200;
 const SECTION_ORDER = ['general', 'security', 'appearance', 'media', 'other'];
@@ -686,7 +686,8 @@ function createAboutSection(): HTMLElement {
         <div class="desc">${getLocale('aboutDescription')}</div>
     `;
     section.appendChild(content);
-        const updateBtn = document.createElement('button');
+
+    const updateBtn = document.createElement('button');
     updateBtn.className = 'btn-check-updates';
     updateBtn.setAttribute('data-i18n', 'checkUpdatesButton');
     updateBtn.textContent = getLocale('checkUpdatesButton');
@@ -695,15 +696,52 @@ function createAboutSection(): HTMLElement {
         border:1px solid rgba(255,255,255,0.08);color:#f0f0f0;border-radius:10px;
         cursor:pointer;font-size:14px;font-weight:700;width:100%;transition:all .2s;
     `;
-    updateBtn.addEventListener('click', () => {
-        const forceUpdate = (window as any).__kmaxForceUpdate;
-        if (typeof forceUpdate !== 'function') {
-            alert(getLocale('checkUpdatesNoLoader'));
+
+    updateBtn.addEventListener('click', async () => {
+        const original = getLocale('checkUpdatesButton');
+        updateBtn.disabled = true;
+        updateBtn.textContent = getLocale('checkUpdatesChecking');
+
+        const hasUpdate = await checkForUpdate();
+
+        if (hasUpdate === null) {
+            updateBtn.textContent = getLocale('checkUpdatesFailed');
+            setTimeout(() => {
+                updateBtn.textContent = original;
+                updateBtn.disabled = false;
+            }, 2000);
             return;
         }
-        forceUpdate();
-        setTimeout(() => location.reload(), 3000);
+
+        if (!hasUpdate) {
+            updateBtn.textContent = getLocale('checkUpdatesUpToDate');
+            setTimeout(() => {
+                updateBtn.textContent = original;
+                updateBtn.disabled = false;
+            }, 2000);
+            return;
+        }
+
+        // Есть обновление. Если есть загрузчик — форсим его и перезагружаемся.
+        const forceUpdate = (window as any).__kmaxForceUpdate;
+        updateBtn.textContent = getLocale('checkUpdatesAvailable');
+
+        if (typeof forceUpdate === 'function') {
+            forceUpdate();
+            setTimeout(() => location.reload(), 3000);
+            return;
+        }
+
+        // Нет загрузчика — показываем сообщение
+        setTimeout(() => {
+            updateBtn.textContent = getLocale('checkUpdatesNoLoader');
+            setTimeout(() => {
+                updateBtn.textContent = original;
+                updateBtn.disabled = false;
+            }, 2500);
+        }, 1500);
     });
+
     section.appendChild(updateBtn);
 
     return section;
