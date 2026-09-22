@@ -1,12 +1,19 @@
 /*
-* @author: potemk.in
-* @brief: Creates the "Settings" button in the sidebar next to the native settings tab.
-* @desc: Subscribes to the centralized DOM observer WITHOUT a selector filter.
-*       Reason: Svelte re-creates the .settingsTab node with a different hash
-*       class on every navigation to Settings, so filtering by the old hash
-*       class would miss the new node. The callback is idempotent, so being
-*       called on every batch is cheap and safe.
-*/
+ * @author: potemk.in
+ * @brief: Creates the "Settings" button in the sidebar next to the native settings tab.
+ * @desc: Subscribes to the centralized DOM observer WITHOUT a selector filter.
+ *        Reason: Svelte re-creates the .settingsTab node with a different hash
+ *        class on every navigation to Settings, so filtering by the old hash
+ *        class would miss the new node. The callback is idempotent, so being
+ *        called on every batch is cheap and safe.
+ *
+ *        FIX: the button can disappear if Svelte re-creates the container.
+ *        We now:
+ *          1) remember the container the button was attached to;
+ *          2) on every mutation batch check that the button still exists
+ *             AND is still a child of the current container;
+ *          3) if not — re-create it.
+ */
 
 import { createElement } from '../core/dom';
 import { logger } from '../core/logger';
@@ -32,6 +39,12 @@ const HEADER_TEXT_MATCHERS = ['Settings', 'Настройки'];
 
 let unwatch: (() => void) | null = null;
 let isCreating = false;
+
+/**
+ * The container the button was last attached to.
+ * Used to detect when Svelte re-creates the container node.
+ */
+let attachedContainer: Element | null = null;
 
 // ============================================================
 // CONTAINER RESOLUTION
@@ -67,6 +80,14 @@ function createSvgWrapper(icon: SVGSVGElement, className: string): HTMLSpanEleme
 // BUTTON CREATION
 // ============================================================
 
+/**
+ * Idempotent. Creates the button only if:
+ *   - the container exists;
+ *   - the container does NOT already contain our button.
+ *
+ * Also updates `attachedContainer` so the observer can detect
+ * container re-creation.
+ */
 export function createSettingsButton(): boolean {
     if (isCreating) return false;
     isCreating = true;
@@ -75,7 +96,15 @@ export function createSettingsButton(): boolean {
         const container = getContainer();
         if (!container) return false;
 
-        if (container.querySelector(`.${SETTINGS_BUTTON_CLASS}`)) return false;
+        // Already in this exact container — nothing to do.
+        const existing = container.querySelector(`.${SETTINGS_BUTTON_CLASS}`);
+        if (existing && existing.parentElement === container) {
+            attachedContainer = container;
+            return false;
+        }
+
+        // Stale button from a previous container — remove it.
+        if (existing) existing.remove();
 
         const button = createElement('button', {
             className: `item svelte-6bkz6t ${SETTINGS_BUTTON_CLASS}`,
@@ -96,6 +125,8 @@ export function createSettingsButton(): boolean {
         button.appendChild(rightIconSpan);
 
         container.appendChild(button);
+        attachedContainer = container;
+
         logger.debug('Settings button created');
         return true;
     } catch (error) {
@@ -106,7 +137,28 @@ export function createSettingsButton(): boolean {
     }
 }
 
+/**
+ * Returns true if the button still exists AND is attached
+ * to the currently resolved container.
+ */
+function isButtonAttached(): boolean {
+    if (!attachedContainer || !attachedContainer.isConnected) return false;
+
+    const container = getContainer();
+    if (!container) return false;
+
+    // Container was re-created by Svelte.
+    if (container !== attachedContainer) return false;
+
+    const btn = container.querySelector(`.${SETTINGS_BUTTON_CLASS}`);
+    return !!btn && btn.parentElement === container;
+}
+
+/**
+ * Called on every mutation batch. Cheap when everything is fine.
+ */
 export function ensureButtons(): void {
+    if (isButtonAttached()) return;
     createSettingsButton();
 }
 
@@ -115,6 +167,7 @@ export function removeButtons(): void {
     if (!container) return;
     const btns = container.querySelectorAll(`.${SETTINGS_BUTTON_CLASS}`);
     for (const btn of btns) btn.remove();
+    attachedContainer = null;
     logger.debug('Buttons removed');
 }
 
@@ -126,18 +179,18 @@ export function removeButtons(): void {
  * Subscribe to the centralized observer.
  * No selector filter — Svelte changes the .settingsTab hash class on each
  * navigation, so filter-based subscription would miss the new container.
- * The callback is idempotent (createSettingsButton checks for an existing
- * button before appending), so being called on every batch is cheap.
+ * The callback is idempotent (ensureButtons checks attachment before
+ * appending), so being called on every batch is cheap.
  */
 export function waitForSettingsAndCreateButtons(): void {
     if (unwatch) return;
 
     unwatch = watchDOM(() => {
-        createSettingsButton();
+        ensureButtons();
     });
 
     // Immediate attempt for already-rendered DOM.
-    createSettingsButton();
+    ensureButtons();
 }
 
 export function stopWaitingForSettings(): void {

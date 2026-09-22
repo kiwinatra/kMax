@@ -26,7 +26,7 @@ import { getAllTemplates, addTemplate, removeTemplate, generateTemplateId } from
 
 
 const ANIMATION_DURATION = 200;
-const SECTION_ORDER = ['general', 'security', 'appearance', 'media', 'other', 'chats'];
+const SECTION_ORDER = ['general', 'security', 'appearance', 'media', 'other'];
 
 // ============================================================
 // SECTION ICONS
@@ -132,7 +132,7 @@ const SECTION_MAP: Record<string, { icon: string; key: string }> = {
     other: { icon: 'other', key: 'sectionOther' },
     language: { icon: 'language', key: 'sectionLanguage' },
     about: { icon: 'about', key: 'sectionAbout' },
-    chats: { icon: 'chats', key: 'sectionChats' },
+    // chats: { icon: 'chats', key: 'sectionChats' },
 };
 
 const FEATURE_SECTION_MAP: Record<string, string> = {
