@@ -1,27 +1,19 @@
 /*
 * @author: potemk.in
-* @brief: Badges for beta testers, developers, and bug hunters, with tooltips.
+* @brief: Badges for beta testers, developers, bug hunters, loved ones.
 * @desc: Appends small icons next to the nickname inside <span class="name">.
-*       Two render contexts exist in MAX:
-*         - .name.svelte-1riu5uh  → display:flex
-*         - .name.svelte-6bkz6t   → inline text + icon
-*       All badges share a single injected stylesheet.
-*
-*       ROBUSTNESS:
-*         - Handles 3 Svelte insertion paths: whole subtree, bare Text node,
-*           characterData change.
-*         - ALSO runs a full rescan on an interval. Svelte sometimes re-renders
-*           a name wrapper in a way that no observable mutation carries the
-*           final text (e.g. several microtask-batched updates collapsed into
-*           a single snapshot). The rescan catches those stragglers within
-*           1.5s instead of never.
 *
 *       ── HOW TO EDIT ROLES ──────────────────────────────────────
-*       Fill ROLE_MAP below. Key = nickname as it appears in DOM
-*       (case / ё / spaces are normalized).
-*       Value = array of roles: 'dev' | 'bug'.
+*       Fill ROLE_MAP below. Key   = nickname as it appears in DOM
+*                                   (case / ё / spaces are normalized).
+*       Value = array of roles: 'dev' | 'bug' | 'heart'.
 *       'verified' is granted automatically to every OFFSETS.betaTesters
 *       match — don't add it here.
+*
+*       Example:
+*           'аня': ['heart'],
+*           'потемкин александр': ['dev'],
+*           'тимоха': ['bug', 'heart'],
 *       ────────────────────────────────────────────────────────────
 */
 
@@ -35,13 +27,15 @@ import { ObserverBatch } from '../../core/observer';
 // ★ EDIT THIS SECTION TO MANAGE ROLES ★
 // ============================================================
 
-type Role = 'dev' | 'bug';
+type Role = 'dev' | 'bug' | 'heart';
 
 const ROLE_MAP: Record<string, Role[]> = {
     'потемкин александр': ['dev'],
     'тимофей борин':      ['bug'],
     'борин тимофей':      ['bug'],
     'тимоха':             ['bug'],
+    'катя':               ['heart'],
+    'Екатерина Райхерт':  ['heart'],
 };
 
 // ============================================================
@@ -56,8 +50,6 @@ const MAX_BETA_CACHE = 200;
 
 const TOOLTIP_DELAY = 180;
 const TOOLTIP_OFFSET = 8;
-
-/** Full rescan interval (ms) when the tab is visible. */
 const RESCAN_INTERVAL = 1500;
 
 type BadgeType = 'verified' | Role;
@@ -66,6 +58,7 @@ const TOOLTIP_TEXTS: Record<BadgeType, string> = {
     verified: 'Верифицированный пользователь',
     dev:      'Разработчик',
     bug:      'Баг-хантер',
+    heart:    '<3',
 };
 
 const NAME_WRAPPER_SELECTORS = [
@@ -90,7 +83,6 @@ const COMBINED_WRAPPER_SELECTOR = NAME_WRAPPER_SELECTORS.join(',');
 
 let isEnabled = false;
 const betaCache = new Map<string, boolean>();
-
 let rescanTimer: number | null = null;
 
 // ============================================================
@@ -125,6 +117,7 @@ function ensureStyles(): void {
 .${BADGE_CLASS}-verified { color: inherit; }
 .${BADGE_CLASS}-dev      { color: #a78bfa; }
 .${BADGE_CLASS}-bug      { color: #fb923c; }
+.${BADGE_CLASS}-heart    { color: #f472b6; }
 
 #${TOOLTIP_ID} {
     position: fixed;
@@ -379,10 +372,28 @@ function createBugBadge(): HTMLElement {
     return i;
 }
 
+/** Heart badge — filled heart, pink. */
+function createHeartBadge(): HTMLElement {
+    const i = makeRoot('heart');
+    const svg = makeSvg('0 0 24 24');
+    svg.setAttribute('fill', 'currentColor');
+    svg.setAttribute('stroke', 'none');
+
+    const path = document.createElementNS(SVG_NS, 'path');
+    path.setAttribute(
+        'd',
+        'M12 21s-7.5-4.9-9.5-9.2C.9 8.7 2.8 5 6.3 5c2 0 3.5 1.1 4.7 2.6C12.2 6.1 13.7 5 15.7 5c3.5 0 5.4 3.7 3.8 6.8C19.5 16.1 12 21 12 21z'
+    );
+    svg.appendChild(path);
+    i.appendChild(svg);
+    return i;
+}
+
 function createBadge(type: BadgeType): HTMLElement {
     if (type === 'verified') return createVerifiedBadge();
     if (type === 'dev')      return createDevBadge();
-    return createBugBadge();
+    if (type === 'bug')      return createBugBadge();
+    return createHeartBadge();
 }
 
 // ============================================================
@@ -523,7 +534,6 @@ function processBatch(batch?: ObserverBatch): number {
     return processed;
 }
 
-/** Cheap full scan of the whole page. */
 function fullRescan(): number {
     let processed = 0;
     const seen = new WeakSet<HTMLElement>();

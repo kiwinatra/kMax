@@ -1,9 +1,8 @@
 /*
-* @author: potemk.in
-* @brief: English locale dictionary.
-* @desc: Fully typed against Locale. Contains every key used by the UI.
-*       All font labels are in English (not a mix of ru/en like before).
-*/
+ * @author: potemk.in
+ * @brief: English locale dictionary.
+ * @desc: Fully typed against Locale. Contains every key used by the UI.
+ */
 
 import type { Locale } from '../types';
 
@@ -28,73 +27,73 @@ export const en: Locale = {
     sectionAppearanceDesc: 'Visual style customization',
     sectionMediaDesc: 'Photo and content settings',
     sectionOtherDesc: 'Additional features',
-    sectionLanguageDesc: 'Select interface language',
+    sectionLanguageDesc: 'Interface language selection',
     sectionAboutDesc: 'Version and developer information',
-    sectionChatsDesc: 'Manage tags and templates for chats',
+    sectionChatsDesc: 'Manage chat tags and templates',
 
     // ===== GENERAL =====
     hideStoriesLabel: 'Hide stories',
-    hideStoriesDesc: 'Hides the stories block in the feed',
+    hideStoriesDesc: 'Hides the stories block in the message feed',
 
     hideSferumLabel: 'Hide Sferum button',
     hideSferumDesc: 'Removes the "Sign in to Sferum" button from the interface',
 
     // ===== SECURITY =====
     blockAnalyticsLabel: 'Block analytics',
-    blockAnalyticsDesc: 'Replaces tracker IDs with fake ones to protect your privacy',
+    blockAnalyticsDesc: 'Spoofs tracker identifiers to protect your privacy',
 
     hidePhoneLabel: 'Hide phone number',
     hidePhoneDesc: 'Hides your phone number in your profile',
 
     // ===== APPEARANCE =====
-    showCrownLabel: 'Beta Tester crown',
-    showCrownDesc: 'Highlights beta tester names with gold color and adds 👑',
+    showCrownLabel: 'Crown for beta testers',
+    showCrownDesc: 'Highlights beta testers’ names in gold and adds a 👑 icon',
 
     replaceTitleLabel: 'kMax in title',
-    replaceTitleDesc: 'Adds "kMax | " prefix to the page title',
+    replaceTitleDesc: 'Adds the prefix "kMax | " to the page title',
 
-    fontFamilyLabel: 'Font Family',
-    fontFamilyDesc: 'Select font for the whole site',
+    fontFamilyLabel: 'Font',
+    fontFamilyDesc: 'Choose a font for the entire site',
 
     // ===== MEDIA =====
-    showMetadataLabel: 'Photo Metadata',
-    showMetadataDesc: 'Adds a button with photo information: size, format, and upload date',
+    showMetadataLabel: 'Photo metadata',
+    showMetadataDesc: 'Adds a button with information about photo size, format, and upload date',
 
     // ===== OTHER =====
     replaceMaxLabel: 'Replace Max → MAX',
-    replaceMaxDesc: 'Replaces all "Max" mentions with "MAX" on the page',
+    replaceMaxDesc: 'Replaces all occurrences of "Max" with "MAX" in page text',
 
-    logViewLabel: '📡 Log Everything',
-    logViewDesc: 'Shows all logs, events, requests and errors in real time',
+    logViewLabel: '📡 Full logging',
+    logViewDesc: 'Shows all logs, events, requests, and errors in real time',
 
     // ===== CHATS =====
-    chatTagsLabel: 'Chat Tags',
-    chatTagsDesc: 'Add colored tags to chats for easy organization',
+    chatTagsLabel: 'Chat tags',
+    chatTagsDesc: 'Add colored tags to chats for convenient organization',
 
-    templatesLabel: 'Reply Templates',
+    templatesLabel: 'Reply templates',
     templatesDesc: 'Quick replies via /command in the input field',
 
     // ===== LANGUAGE =====
     languageLabel: 'Interface language',
-    languageRu: 'Русский',
+    languageRu: 'Russian',
     languageEn: 'English',
 
     // ===== ABOUT =====
     aboutName: 'kMax Mod',
     aboutVersion: 'Version',
     aboutAuthor: 'Author',
-    aboutDescription: 'Mod for max.ru with additional features for convenience and customization.',
+    aboutDescription: 'A mod for max.ru with additional features for convenience and personalization.',
 
     // ===== BUTTONS =====
     saveButton: 'Save',
-    resetButton: 'Reset All',
+    resetButton: 'Reset all',
     resetConfirm: 'Are you sure you want to reset all settings?',
     closeButton: 'Close',
 
     // ===== STATUSES =====
     statusActive: 'Active',
-    statusEnabled: 'On',
-    statusDisabled: 'Off',
+    statusEnabled: 'Enabled',
+    statusDisabled: 'Disabled',
 
     // ===== UI =====
     toggleOn: 'On',
@@ -146,11 +145,12 @@ export const en: Locale = {
     fontFamilyJetBrainsMono: 'JetBrains Mono',
     fontFamilyCaveat: 'Caveat',
     fontFamilyMarckScript: 'Marck Script',
-    checkUpdatesButton: 'Check for updates',
-checkUpdatesChecking: 'Checking...',
-checkUpdatesUpToDate: 'You are up to date',
-checkUpdatesAvailable: 'Update available!',
-checkUpdatesFailed: 'Failed to check for updates',
-checkUpdatesNoLoader: 'You are not running through the loader. Update manually.',
 
+    // ===== UPDATES =====
+    checkUpdatesButton: 'Check for updates',
+    checkUpdatesChecking: 'Checking...',
+    checkUpdatesUpToDate: 'You have the latest version installed',
+    checkUpdatesAvailable: 'Update available!',
+    checkUpdatesFailed: 'Failed to check for updates',
+    checkUpdatesNoLoader: 'You are not running through the loader. Please update manually.',
 };

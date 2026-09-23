@@ -1,8 +1,8 @@
 /*
-* @author: potemk.in
-* @brief: Russian locale dictionary.
-* @desc: Fully typed against Locale. Contains every key used by the UI.
-*/
+ * @author: potemk.in
+ * @brief: Russian locale dictionary.
+ * @desc: Fully typed against Locale. Contains every key used by the UI.
+ */
 
 import type { Locale } from '../types';
 
@@ -24,7 +24,7 @@ export const ru: Locale = {
     // ===== SECTION DESCRIPTIONS =====
     sectionGeneralDesc: 'Настройки интерфейса и отображения',
     sectionSecurityDesc: 'Защита приватности и конфиденциальности',
-    sectionAppearanceDesc: 'Кастомизация визуального стиля',
+    sectionAppearanceDesc: 'Настройка визуального стиля',
     sectionMediaDesc: 'Настройки для фото и контента',
     sectionOtherDesc: 'Дополнительные функции',
     sectionLanguageDesc: 'Выбор языка интерфейса',
@@ -36,34 +36,34 @@ export const ru: Locale = {
     hideStoriesDesc: 'Скрывает блок со сторис в ленте сообщений',
 
     hideSferumLabel: 'Скрыть кнопку Сферума',
-    hideSferumDesc: 'Убирает кнопку "Войти в Сферум" из интерфейса',
+    hideSferumDesc: 'Убирает кнопку «Войти в Сферум» из интерфейса',
 
     // ===== SECURITY =====
     blockAnalyticsLabel: 'Блокировка аналитики',
-    blockAnalyticsDesc: 'Подменяет идентификаторы трекера на фейковые, защищая вашу приватность',
+    blockAnalyticsDesc: 'Подменяет идентификаторы трекеров на фиктивные, защищая вашу приватность',
 
     hidePhoneLabel: 'Скрыть номер телефона',
     hidePhoneDesc: 'Скрывает ваш номер телефона в профиле',
 
     // ===== APPEARANCE =====
-    showCrownLabel: 'Корона бета-тестерам',
-    showCrownDesc: 'Выделяет имена бета-тестеров золотым цветом и добавляет 👑',
+    showCrownLabel: 'Иконки для важных людей',
+    showCrownDesc: 'важные люди очень важные',
 
     replaceTitleLabel: 'kMax в заголовке',
-    replaceTitleDesc: 'Добавляет префикс "kMax | " в заголовок страницы',
+    replaceTitleDesc: 'Добавляет префикс «kMax | » в заголовок страницы',
 
     fontFamilyLabel: 'Шрифт',
     fontFamilyDesc: 'Выберите шрифт для всего сайта',
 
     // ===== MEDIA =====
-    showMetadataLabel: 'Metadata для фото',
+    showMetadataLabel: 'Метаданные фото',
     showMetadataDesc: 'Добавляет кнопку с информацией о размере, формате и дате загрузки фото',
 
     // ===== OTHER =====
     replaceMaxLabel: 'Замена Max → MAX',
-    replaceMaxDesc: 'Заменяет все упоминания "Max" на "MAX" в тексте страницы',
+    replaceMaxDesc: 'Заменяет все упоминания «Max» на «MAX» в тексте страницы',
 
-    logViewLabel: '📡 Логирование всего',
+    logViewLabel: 'Полное логирование',
     logViewDesc: 'Показывает все логи, события, запросы и ошибки в реальном времени',
 
     // ===== CHATS =====
@@ -82,7 +82,7 @@ export const ru: Locale = {
     aboutName: 'kMax Mod',
     aboutVersion: 'Версия',
     aboutAuthor: 'Автор',
-    aboutDescription: 'Мод для max.ru с дополнительными функциями для удобства и кастомизации.',
+    aboutDescription: 'Мод для max.ru с дополнительными функциями для удобства и персонализации.',
 
     // ===== BUTTONS =====
     saveButton: 'Сохранить',
@@ -92,8 +92,8 @@ export const ru: Locale = {
 
     // ===== STATUSES =====
     statusActive: 'Активно',
-    statusEnabled: 'Вкл',
-    statusDisabled: 'Выкл',
+    statusEnabled: 'Включено',
+    statusDisabled: 'Отключено',
 
     // ===== UI =====
     toggleOn: 'Вкл',
@@ -145,10 +145,12 @@ export const ru: Locale = {
     fontFamilyJetBrainsMono: 'JetBrains Mono',
     fontFamilyCaveat: 'Caveat',
     fontFamilyMarckScript: 'Marck Script',
+
+    // ===== UPDATES =====
     checkUpdatesButton: 'Проверить обновления',
-checkUpdatesChecking: 'Проверка...',
-checkUpdatesUpToDate: 'У вас последняя версия',
-checkUpdatesAvailable: 'Доступно обновление!',
-checkUpdatesFailed: 'Не удалось проверить обновления',
-checkUpdatesNoLoader: 'Вы загружаетесь не через загрузчик. Обновляйтесь вручную.',
+    checkUpdatesChecking: 'Проверка...',
+    checkUpdatesUpToDate: 'У вас установлена последняя версия',
+    checkUpdatesAvailable: 'Доступно обновление!',
+    checkUpdatesFailed: 'Не удалось проверить обновления',
+    checkUpdatesNoLoader: 'Вы запускаете не через загрузчик. Обновите вручную.',
 };
