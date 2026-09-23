@@ -5,15 +5,20 @@
 *       Two render contexts exist in MAX:
 *         - .name.svelte-1riu5uh  → display:flex
 *         - .name.svelte-6bkz6t   → inline text + icon
-*       All badges share a single injected stylesheet, so both contexts
-*       look identical and stay vertically aligned.
+*       All badges share a single injected stylesheet.
 *
-*       Tooltips use event delegation on document, so they work for badges
-*       added after init without re-binding listeners.
+*       ROBUSTNESS:
+*         - Handles 3 Svelte insertion paths: whole subtree, bare Text node,
+*           characterData change.
+*         - ALSO runs a full rescan on an interval. Svelte sometimes re-renders
+*           a name wrapper in a way that no observable mutation carries the
+*           final text (e.g. several microtask-batched updates collapsed into
+*           a single snapshot). The rescan catches those stragglers within
+*           1.5s instead of never.
 *
 *       ── HOW TO EDIT ROLES ──────────────────────────────────────
-*       Fill ROLE_MAP below. Key   = nickname as it appears in DOM
-*                                   (case / ё / spaces are normalized).
+*       Fill ROLE_MAP below. Key = nickname as it appears in DOM
+*       (case / ё / spaces are normalized).
 *       Value = array of roles: 'dev' | 'bug'.
 *       'verified' is granted automatically to every OFFSETS.betaTesters
 *       match — don't add it here.
@@ -49,8 +54,11 @@ const STYLE_ID = 'kmod-crown-styles';
 const TOOLTIP_ID = 'kmod-badge-tooltip';
 const MAX_BETA_CACHE = 200;
 
-const TOOLTIP_DELAY = 180;   // ms before showing
-const TOOLTIP_OFFSET = 8;    // px gap between badge and tooltip
+const TOOLTIP_DELAY = 180;
+const TOOLTIP_OFFSET = 8;
+
+/** Full rescan interval (ms) when the tab is visible. */
+const RESCAN_INTERVAL = 1500;
 
 type BadgeType = 'verified' | Role;
 
@@ -67,7 +75,7 @@ const NAME_WRAPPER_SELECTORS = [
 ];
 
 const NAME_TEXT_SELECTORS = [
-    OFFSETS.classes.name,          // 'span.text.svelte-1riu5uh'
+    OFFSETS.classes.name,
     'span.text.svelte-1riu5uh',
     '.text.svelte-1riu5uh',
     'span.text',
@@ -83,8 +91,10 @@ const COMBINED_WRAPPER_SELECTOR = NAME_WRAPPER_SELECTORS.join(',');
 let isEnabled = false;
 const betaCache = new Map<string, boolean>();
 
+let rescanTimer: number | null = null;
+
 // ============================================================
-// STYLES (injected once)
+// STYLES
 // ============================================================
 
 function ensureStyles(): void {
@@ -173,7 +183,6 @@ let currentBadge: HTMLElement | null = null;
 
 function ensureTooltip(): HTMLDivElement {
     if (tooltipEl && document.body.contains(tooltipEl)) return tooltipEl;
-
     const el = document.createElement('div');
     el.id = TOOLTIP_ID;
     document.body.appendChild(el);
@@ -184,7 +193,6 @@ function ensureTooltip(): HTMLDivElement {
 function showTooltip(badge: HTMLElement): void {
     const type = badge.dataset.kmodBadge as BadgeType | undefined;
     if (!type) return;
-
     const text = TOOLTIP_TEXTS[type];
     if (!text) return;
 
@@ -192,7 +200,6 @@ function showTooltip(badge: HTMLElement): void {
     el.textContent = text;
     el.classList.remove('kmod-tt-visible');
 
-    // Position: centered above the badge, just after it renders.
     requestAnimationFrame(() => {
         if (!badge.isConnected) return;
         const rect = badge.getBoundingClientRect();
@@ -201,19 +208,12 @@ function showTooltip(badge: HTMLElement): void {
         let left = rect.left + rect.width / 2 - ttRect.width / 2;
         let top = rect.top - ttRect.height - TOOLTIP_OFFSET;
 
-        // Keep inside viewport
         const margin = 6;
         if (left < margin) left = margin;
         if (left + ttRect.width > window.innerWidth - margin) {
             left = window.innerWidth - ttRect.width - margin;
         }
-        // If not enough room on top — put below
-        if (top < margin) {
-            top = rect.bottom + TOOLTIP_OFFSET;
-            el.style.setProperty('--tt-arrow', 'top');
-        } else {
-            el.style.removeProperty('--tt-arrow');
-        }
+        if (top < margin) top = rect.bottom + TOOLTIP_OFFSET;
 
         el.style.left = `${Math.round(left)}px`;
         el.style.top  = `${Math.round(top)}px`;
@@ -233,19 +233,15 @@ function hideTooltip(): void {
 function onPointerOver(e: Event): void {
     const target = e.target as Element | null;
     if (!target) return;
-
     const badge = target.closest?.('.' + BADGE_CLASS) as HTMLElement | null;
     if (!badge || !badge.dataset.kmodBadge) return;
     if (badge === currentBadge) return;
 
     hideTooltip();
     currentBadge = badge;
-
     tooltipTimer = window.setTimeout(() => {
         tooltipTimer = null;
-        if (currentBadge === badge && badge.isConnected) {
-            showTooltip(badge);
-        }
+        if (currentBadge === badge && badge.isConnected) showTooltip(badge);
     }, TOOLTIP_DELAY);
 }
 
@@ -254,10 +250,7 @@ function onPointerOut(e: Event): void {
     if (!target) return;
     const badge = target.closest?.('.' + BADGE_CLASS);
     if (!badge) return;
-
-    if (badge === currentBadge) {
-        hideTooltip();
-    }
+    if (badge === currentBadge) hideTooltip();
 }
 
 function installTooltipDelegation(): void {
@@ -348,7 +341,6 @@ function createDevBadge(): HTMLElement {
     svg.setAttribute('stroke-width', '1.8');
     svg.setAttribute('stroke-linecap', 'round');
     svg.setAttribute('stroke-linejoin', 'round');
-
     for (const d of ['M5.5 5L2.5 8L5.5 11', 'M10.5 5L13.5 8L10.5 11', 'M9 3.5L7 12.5']) {
         const p = document.createElementNS(SVG_NS, 'path');
         p.setAttribute('d', d);
@@ -375,13 +367,9 @@ function createBugBadge(): HTMLElement {
     svg.appendChild(ellipse);
 
     for (const d of [
-        'M8 6V3.5',
-        'M6 3.5L7 5',
-        'M10 3.5L9 5',
-        'M5 8L2.5 7.5',
-        'M5 10.5L2.5 11.5',
-        'M11 8L13.5 7.5',
-        'M11 10.5L13.5 11.5',
+        'M8 6V3.5', 'M6 3.5L7 5', 'M10 3.5L9 5',
+        'M5 8L2.5 7.5', 'M5 10.5L2.5 11.5',
+        'M11 8L13.5 7.5', 'M11 10.5L13.5 11.5',
     ]) {
         const p = document.createElementNS(SVG_NS, 'path');
         p.setAttribute('d', d);
@@ -427,7 +415,7 @@ function getNameText(nameWrapper: HTMLElement): string {
 }
 
 // ============================================================
-// SYNC ONE WRAPPER
+// SYNC
 // ============================================================
 
 function syncWrapper(nameWrapper: HTMLElement): boolean {
@@ -535,6 +523,46 @@ function processBatch(batch?: ObserverBatch): number {
     return processed;
 }
 
+/** Cheap full scan of the whole page. */
+function fullRescan(): number {
+    let processed = 0;
+    const seen = new WeakSet<HTMLElement>();
+    for (const sel of NAME_WRAPPER_SELECTORS) {
+        qsa<HTMLElement>(sel).forEach((w) => {
+            if (seen.has(w)) return;
+            seen.add(w);
+            if (syncWrapper(w)) processed++;
+        });
+    }
+    return processed;
+}
+
+// ============================================================
+// AUTO-RESCAN
+// ============================================================
+
+function startAutoRescan(): void {
+    if (rescanTimer !== null) return;
+    rescanTimer = window.setInterval(() => {
+        if (!isEnabled) return;
+        if (document.visibilityState !== 'visible') return;
+        if (!storage.getBoolean('showCrown')) return;
+        try {
+            fullRescan();
+        } catch (e) {
+            logger.error('Auto-rescan failed:', e);
+        }
+    }, RESCAN_INTERVAL);
+    logger.debug(`🔄 Auto-rescan started (every ${RESCAN_INTERVAL}ms)`);
+}
+
+function stopAutoRescan(): void {
+    if (rescanTimer === null) return;
+    clearInterval(rescanTimer);
+    rescanTimer = null;
+    logger.debug('🔄 Auto-rescan stopped');
+}
+
 // ============================================================
 // REMOVE
 // ============================================================
@@ -576,11 +604,13 @@ export function enable(): void {
     installTooltipDelegation();
     logger.info('✅ Badges enabled');
     apply();
+    startAutoRescan();
 }
 
 export function disable(): void {
     if (!isEnabled) return;
     isEnabled = false;
+    stopAutoRescan();
     uninstallTooltipDelegation();
     removeAllMarks();
     removeStyles();
