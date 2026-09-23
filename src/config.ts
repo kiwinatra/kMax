@@ -15,7 +15,7 @@ import { OFFSETS } from './offsets';
 
 export const CONFIG = {
     name: 'kMax Mod',
-    version: '1.5.3',
+    version: '1.5.3', // fix
     author: 'kiwinatra потемкин короче',
     site: 'max.ru',
 } as const;
