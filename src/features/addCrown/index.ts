@@ -1,12 +1,15 @@
 /*
 * @author: potemk.in
-* @brief: Badges for beta testers, developers, and bug hunters.
+* @brief: Badges for beta testers, developers, and bug hunters, with tooltips.
 * @desc: Appends small icons next to the nickname inside <span class="name">.
 *       Two render contexts exist in MAX:
 *         - .name.svelte-1riu5uh  → display:flex
 *         - .name.svelte-6bkz6t   → inline text + icon
 *       All badges share a single injected stylesheet, so both contexts
 *       look identical and stay vertically aligned.
+*
+*       Tooltips use event delegation on document, so they work for badges
+*       added after init without re-binding listeners.
 *
 *       ── HOW TO EDIT ROLES ──────────────────────────────────────
 *       Fill ROLE_MAP below. Key   = nickname as it appears in DOM
@@ -15,11 +18,6 @@
 *       'verified' is granted automatically to every OFFSETS.betaTesters
 *       match — don't add it here.
 *       ────────────────────────────────────────────────────────────
-*
-*       Batch-aware. Handles THREE insertion paths Svelte uses:
-*         1) whole <span class="name"> subtree added at once,
-*         2) plain Text node inserted into an existing .text,
-*         3) characterData change inside .text / .name.
 */
 
 import { logger } from '../../core/logger';
@@ -37,7 +35,7 @@ type Role = 'dev' | 'bug';
 const ROLE_MAP: Record<string, Role[]> = {
     'потемкин александр': ['dev'],
     'тимофей борин':      ['bug'],
-    'борин тимофей':      ['bug'],  // на случай обратного порядка
+    'борин тимофей':      ['bug'],
     'тимоха':             ['bug'],
 };
 
@@ -48,9 +46,19 @@ const ROLE_MAP: Record<string, Role[]> = {
 const MARK_ATTR = 'kmodCrown';
 const BADGE_CLASS = 'kmod-badge';
 const STYLE_ID = 'kmod-crown-styles';
+const TOOLTIP_ID = 'kmod-badge-tooltip';
 const MAX_BETA_CACHE = 200;
 
+const TOOLTIP_DELAY = 180;   // ms before showing
+const TOOLTIP_OFFSET = 8;    // px gap between badge and tooltip
+
 type BadgeType = 'verified' | Role;
+
+const TOOLTIP_TEXTS: Record<BadgeType, string> = {
+    verified: 'Верифицированный пользователь',
+    dev:      'Разработчик',
+    bug:      'Баг-хантер',
+};
 
 const NAME_WRAPPER_SELECTORS = [
     'span.name.svelte-1riu5uh',
@@ -97,6 +105,7 @@ function ensureStyles(): void {
     height: 16px;
     position: relative;
     top: -0.08em;
+    cursor: help;
 }
 .${BADGE_CLASS} svg {
     display: block;
@@ -106,12 +115,163 @@ function ensureStyles(): void {
 .${BADGE_CLASS}-verified { color: inherit; }
 .${BADGE_CLASS}-dev      { color: #a78bfa; }
 .${BADGE_CLASS}-bug      { color: #fb923c; }
+
+#${TOOLTIP_ID} {
+    position: fixed;
+    z-index: 2147483647;
+    pointer-events: none;
+
+    padding: 6px 10px;
+    border-radius: 8px;
+    background: rgba(15, 15, 25, 0.96);
+    color: #f0f0f0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.2px;
+    white-space: nowrap;
+
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+
+    opacity: 0;
+    transform: translateY(-3px);
+    transition: opacity 0.15s ease, transform 0.15s ease;
+}
+#${TOOLTIP_ID}.kmod-tt-visible {
+    opacity: 1;
+    transform: translateY(0);
+}
+#${TOOLTIP_ID}::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    bottom: -5px;
+    transform: translateX(-50%) rotate(45deg);
+    width: 8px;
+    height: 8px;
+    background: rgba(15, 15, 25, 0.96);
+    border-right: 1px solid rgba(255, 255, 255, 0.08);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
 `;
     document.head.appendChild(style);
 }
 
 function removeStyles(): void {
     document.getElementById(STYLE_ID)?.remove();
+    document.getElementById(TOOLTIP_ID)?.remove();
+}
+
+// ============================================================
+// TOOLTIP
+// ============================================================
+
+let tooltipEl: HTMLDivElement | null = null;
+let tooltipTimer: number | null = null;
+let currentBadge: HTMLElement | null = null;
+
+function ensureTooltip(): HTMLDivElement {
+    if (tooltipEl && document.body.contains(tooltipEl)) return tooltipEl;
+
+    const el = document.createElement('div');
+    el.id = TOOLTIP_ID;
+    document.body.appendChild(el);
+    tooltipEl = el;
+    return el;
+}
+
+function showTooltip(badge: HTMLElement): void {
+    const type = badge.dataset.kmodBadge as BadgeType | undefined;
+    if (!type) return;
+
+    const text = TOOLTIP_TEXTS[type];
+    if (!text) return;
+
+    const el = ensureTooltip();
+    el.textContent = text;
+    el.classList.remove('kmod-tt-visible');
+
+    // Position: centered above the badge, just after it renders.
+    requestAnimationFrame(() => {
+        if (!badge.isConnected) return;
+        const rect = badge.getBoundingClientRect();
+        const ttRect = el.getBoundingClientRect();
+
+        let left = rect.left + rect.width / 2 - ttRect.width / 2;
+        let top = rect.top - ttRect.height - TOOLTIP_OFFSET;
+
+        // Keep inside viewport
+        const margin = 6;
+        if (left < margin) left = margin;
+        if (left + ttRect.width > window.innerWidth - margin) {
+            left = window.innerWidth - ttRect.width - margin;
+        }
+        // If not enough room on top — put below
+        if (top < margin) {
+            top = rect.bottom + TOOLTIP_OFFSET;
+            el.style.setProperty('--tt-arrow', 'top');
+        } else {
+            el.style.removeProperty('--tt-arrow');
+        }
+
+        el.style.left = `${Math.round(left)}px`;
+        el.style.top  = `${Math.round(top)}px`;
+        el.classList.add('kmod-tt-visible');
+    });
+}
+
+function hideTooltip(): void {
+    if (tooltipTimer !== null) {
+        clearTimeout(tooltipTimer);
+        tooltipTimer = null;
+    }
+    currentBadge = null;
+    if (tooltipEl) tooltipEl.classList.remove('kmod-tt-visible');
+}
+
+function onPointerOver(e: Event): void {
+    const target = e.target as Element | null;
+    if (!target) return;
+
+    const badge = target.closest?.('.' + BADGE_CLASS) as HTMLElement | null;
+    if (!badge || !badge.dataset.kmodBadge) return;
+    if (badge === currentBadge) return;
+
+    hideTooltip();
+    currentBadge = badge;
+
+    tooltipTimer = window.setTimeout(() => {
+        tooltipTimer = null;
+        if (currentBadge === badge && badge.isConnected) {
+            showTooltip(badge);
+        }
+    }, TOOLTIP_DELAY);
+}
+
+function onPointerOut(e: Event): void {
+    const target = e.target as Element | null;
+    if (!target) return;
+    const badge = target.closest?.('.' + BADGE_CLASS);
+    if (!badge) return;
+
+    if (badge === currentBadge) {
+        hideTooltip();
+    }
+}
+
+function installTooltipDelegation(): void {
+    document.addEventListener('mouseover', onPointerOver, true);
+    document.addEventListener('mouseout', onPointerOut, true);
+    window.addEventListener('scroll', hideTooltip, true);
+    window.addEventListener('blur', hideTooltip);
+}
+
+function uninstallTooltipDelegation(): void {
+    document.removeEventListener('mouseover', onPointerOver, true);
+    document.removeEventListener('mouseout', onPointerOut, true);
+    window.removeEventListener('scroll', hideTooltip, true);
+    window.removeEventListener('blur', hideTooltip);
 }
 
 // ============================================================
@@ -167,11 +327,12 @@ function makeSvg(viewBox: string): SVGSVGElement {
     return svg;
 }
 
-/** Native MAX verification icon (uses the site's <use> sprite). */
 function createVerifiedBadge(): HTMLElement {
     const i = makeRoot('verified');
-    const svg = makeSvg('0 0 24 24');
-    svg.removeAttribute('viewBox');
+    const svg = document.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('width', '16');
+    svg.setAttribute('height', '16');
     const use = document.createElementNS(SVG_NS, 'use');
     use.setAttribute('href', '#icon_verification_mini_themed');
     svg.appendChild(use);
@@ -179,7 +340,6 @@ function createVerifiedBadge(): HTMLElement {
     return i;
 }
 
-/** Developer badge — `</>` glyph, purple. */
 function createDevBadge(): HTMLElement {
     const i = makeRoot('dev');
     const svg = makeSvg('0 0 16 16');
@@ -189,12 +349,7 @@ function createDevBadge(): HTMLElement {
     svg.setAttribute('stroke-linecap', 'round');
     svg.setAttribute('stroke-linejoin', 'round');
 
-    const paths = [
-        'M5.5 5L2.5 8L5.5 11',
-        'M10.5 5L13.5 8L10.5 11',
-        'M9 3.5L7 12.5',
-    ];
-    for (const d of paths) {
+    for (const d of ['M5.5 5L2.5 8L5.5 11', 'M10.5 5L13.5 8L10.5 11', 'M9 3.5L7 12.5']) {
         const p = document.createElementNS(SVG_NS, 'path');
         p.setAttribute('d', d);
         svg.appendChild(p);
@@ -203,7 +358,6 @@ function createDevBadge(): HTMLElement {
     return i;
 }
 
-/** Bug hunter badge — beetle glyph, orange. */
 function createBugBadge(): HTMLElement {
     const i = makeRoot('bug');
     const svg = makeSvg('0 0 16 16');
@@ -220,7 +374,7 @@ function createBugBadge(): HTMLElement {
     ellipse.setAttribute('ry', '3.5');
     svg.appendChild(ellipse);
 
-    const paths = [
+    for (const d of [
         'M8 6V3.5',
         'M6 3.5L7 5',
         'M10 3.5L9 5',
@@ -228,8 +382,7 @@ function createBugBadge(): HTMLElement {
         'M5 10.5L2.5 11.5',
         'M11 8L13.5 7.5',
         'M11 10.5L13.5 11.5',
-    ];
-    for (const d of paths) {
+    ]) {
         const p = document.createElementNS(SVG_NS, 'path');
         p.setAttribute('d', d);
         svg.appendChild(p);
@@ -270,8 +423,6 @@ function getNameText(nameWrapper: HTMLElement): string {
             if (t) return t;
         }
     }
-    // .name.svelte-6bkz6t: nickname lives directly in .name, our <i>s
-    // carry no text nodes, so textContent is exactly the nickname.
     return (nameWrapper.textContent || '').trim();
 }
 
@@ -279,12 +430,6 @@ function getNameText(nameWrapper: HTMLElement): string {
 // SYNC ONE WRAPPER
 // ============================================================
 
-/**
- * Make the DOM match the desired badge set:
- *   verified (if beta tester) + roles from ROLE_MAP.
- * Skips our 'verified' badge if MAX already drew a native one.
- * Returns true if the DOM was changed.
- */
 function syncWrapper(nameWrapper: HTMLElement): boolean {
     const name = getNameText(nameWrapper);
     if (!name) return false;
@@ -297,8 +442,6 @@ function syncWrapper(nameWrapper: HTMLElement): boolean {
     if (isBeta) expected.push('verified');
     for (const r of roles) expected.push(r);
 
-    // If MAX itself has a verification badge next to this name — don't
-    // duplicate it with ours. Role badges still get added.
     const nativeIcon = nameWrapper.querySelector(
         'i.icon.svelte-i2tuez:not(.' + BADGE_CLASS + ')'
     );
@@ -317,7 +460,6 @@ function syncWrapper(nameWrapper: HTMLElement): boolean {
 
     if (!needsRebuild) return false;
 
-    // Rebuild in canonical order.
     nameWrapper.querySelectorAll('.' + BADGE_CLASS).forEach((el) => el.remove());
     for (const t of expected) {
         nameWrapper.appendChild(createBadge(t));
@@ -356,9 +498,6 @@ function processBatch(batch?: ObserverBatch): number {
                 node.querySelectorAll<HTMLElement>(COMBINED_WRAPPER_SELECTOR)
                     .forEach(handle);
             } else if (node.nodeType === Node.TEXT_NODE) {
-                // Svelte inserts nickname as a bare Text node:
-                //  - inside .text (svelte-1riu5uh)
-                //  - or directly inside .name (svelte-6bkz6t)
                 const parent = (node as Text).parentElement;
                 if (!parent) continue;
                 if (parent.matches(COMBINED_TEXT_SELECTOR)) {
@@ -401,6 +540,7 @@ function processBatch(batch?: ObserverBatch): number {
 // ============================================================
 
 function removeAllMarks(): void {
+    hideTooltip();
     for (const sel of NAME_WRAPPER_SELECTORS) {
         const wrappers = qsa<HTMLElement>(sel);
         for (const w of wrappers) {
@@ -433,6 +573,7 @@ export function enable(): void {
     if (isEnabled) return;
     isEnabled = true;
     ensureStyles();
+    installTooltipDelegation();
     logger.info('✅ Badges enabled');
     apply();
 }
@@ -440,6 +581,7 @@ export function enable(): void {
 export function disable(): void {
     if (!isEnabled) return;
     isEnabled = false;
+    uninstallTooltipDelegation();
     removeAllMarks();
     removeStyles();
     betaCache.clear();
