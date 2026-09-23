@@ -1,6 +1,6 @@
 {
   "name": "kmax-mod",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "description": "Mod for max.ru with extra features",
   "main": "src/main.ts",
   "scripts": {
