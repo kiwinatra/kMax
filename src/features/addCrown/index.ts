@@ -53,11 +53,10 @@ const RESCAN_INTERVAL = 500;
 
 type BadgeType = 'verified' | Role;
 
-const BADGE_COLORS: Record<BadgeType, string> = {
-    verified: 'currentColor',
-    dev:      '#a78bfa',
-    bug:      '#fb923c',
-    heart:    '#f472b6',
+const BADGE_COLORS: Partial<Record<BadgeType, string>> = {
+    dev:   '#4000ff',
+    bug:   '#002fff',
+    heart: '#000000',
 };
 
 const TOOLTIP_TEXTS: Record<BadgeType, string> = {
@@ -352,10 +351,10 @@ function makeRoot(type: BadgeType): HTMLElement {
     const i = document.createElement('i');
     i.className = `icon svelte-i2tuez ${BADGE_CLASS} ${BADGE_CLASS}-${type}`;
     i.dataset.kmodBadge = type;
-    // Inline style — belt & suspenders against CSS injection failure.
     i.style.cssText = BADGE_INLINE_STYLE;
-    // Inline color for role badges (overrides any inherited color).
-    i.style.color = BADGE_COLORS[type];
+    // Only override color for OUR badges. verified must inherit MAX's theme.
+    const c = BADGE_COLORS[type];
+    if (c) i.style.color = c;
     return i;
 }
 
