@@ -109,7 +109,7 @@ export const FEATURES: Record<string, Feature> = {
         enable: enableCrown,
         disable: disableCrown,
         lazy: true,
-        selectors: ['span.text', '.text.svelte-1riu5uh'],
+        // selectors: ['span.text', '.text.svelte-1riu5uh'],
     },
     replaceTitle: {
         key: 'replaceTitle',

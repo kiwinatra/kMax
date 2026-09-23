@@ -1,21 +1,26 @@
 /*
 * @author: potemk.in
-* @brief: Highlights beta tester names with a golden style and 👑 emoji.
-* @desc: Pure apply-based feature. No local observer or timers — the central registry triggers apply() only when matching nodes (span.text / .text.svelte-1riu5uh) appear in the DOM batch. Uses dataset flag to stay idempotent, and a small cache for beta-tester name lookups.
+* @brief: Marks beta tester names with the site's native verification mini icon.
+* @desc: Pure apply-based feature, batch-aware. Because Svelte may replace
+*       only the text inside an existing name node (or re-create the icon
+*       node during re-render), we:
+*         1) run on every batch (no selector filter in registry),
+*         2) process characterData nodes as well as added nodes,
+*         3) re-check icon presence even when dataset flag is set.
 */
 
 import { logger } from '../../core/logger';
 import { storage } from '../../core/storage';
 import { qsa } from '../../core/dom';
 import { OFFSETS } from '../../offsets';
+import { ObserverBatch } from '../../core/observer';
 
 // ============================================================
 // CONSTANTS
 // ============================================================
 
-const CROWN_EMOJI = '👑';
-const GOLD_COLOR = '#ffd700';
-const GOLD_SHADOW = '0 0 20px rgba(255, 215, 0, 0.4)';
+const MARK_ATTR = 'kmodCrown';
+const ICON_CLASS = 'kmod-verified';
 const MAX_BETA_CACHE = 200;
 
 const NAME_SELECTORS = [
@@ -56,71 +61,122 @@ function isBetaTester(name: string): boolean {
 }
 
 // ============================================================
+// ICON
+// ============================================================
+
+function createVerificationIcon(): HTMLElement {
+    const i = document.createElement('i');
+    i.className = `icon svelte-i2tuez ${ICON_CLASS}`;
+
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('width', '16');
+    svg.setAttribute('height', '16');
+
+    const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+    use.setAttribute('href', '#icon_verification_mini_themed');
+
+    svg.appendChild(use);
+    i.appendChild(svg);
+    return i;
+}
+
+// ============================================================
 // DOM PROCESSING
 // ============================================================
 
-function findNameElements(): Element[] {
+function findNameElements(): HTMLElement[] {
     for (const selector of NAME_SELECTORS) {
-        const elements = qsa(selector);
+        const elements = qsa<HTMLElement>(selector);
         if (elements.length > 0) return elements;
     }
     return [];
 }
 
-function applyCrownToElement(element: HTMLElement): boolean {
-    if (element.dataset.kmodCrown === 'true') return false;
-
+/**
+ * Sync one name element with the desired state.
+ * Returns true if we did something (add / re-add icon).
+ */
+function syncElement(element: HTMLElement): boolean {
     const name = element.textContent?.trim() || '';
-    if (!name || !isBetaTester(name)) return false;
+    if (!name) return false;
 
-    element.dataset.kmodCrown = 'true';
-    element.style.color = GOLD_COLOR;
-    element.style.fontWeight = '700';
-    element.style.textShadow = GOLD_SHADOW;
+    const isBeta = isBetaTester(name);
+    const hasIcon = !!element.querySelector(`.${ICON_CLASS}`);
+    const marked = element.dataset[MARK_ATTR] === 'true';
 
-    if (!element.textContent?.includes(CROWN_EMOJI)) {
-        element.textContent += ` ${CROWN_EMOJI}`;
+    // Not a beta tester → ensure no leftover icon / flag
+    if (!isBeta) {
+        if (hasIcon || marked) {
+            element.querySelectorAll(`.${ICON_CLASS}`).forEach((n) => n.remove());
+            delete element.dataset[MARK_ATTR];
+            return true;
+        }
+        return false;
     }
+
+    // Is a beta tester and icon is present → nothing to do
+    if (hasIcon) {
+        if (!marked) element.dataset[MARK_ATTR] = 'true';
+        return false;
+    }
+
+    // Is a beta tester but icon is missing → (re)insert
+    element.appendChild(createVerificationIcon());
+    element.dataset[MARK_ATTR] = 'true';
     return true;
 }
 
-function processPage(): void {
-    if (!isEnabled) return;
-    if (!storage.getBoolean('showCrown')) return;
-
-    const elements = findNameElements();
-    if (elements.length === 0) return;
-
+function processBatch(batch?: ObserverBatch): number {
     let processed = 0;
-    for (const el of elements) {
-        if (applyCrownToElement(el as HTMLElement)) processed++;
+
+    if (batch) {
+        // 1. Added nodes: check the node itself + its descendants
+        for (const node of batch.addedNodes) {
+            if (node instanceof Element) {
+                if (node.matches(NAME_SELECTORS.join(','))) {
+                    if (syncElement(node as HTMLElement)) processed++;
+                }
+                const descendants = node.querySelectorAll<HTMLElement>(
+                    NAME_SELECTORS.join(',')
+                );
+                for (const el of descendants) {
+                    if (syncElement(el)) processed++;
+                }
+            }
+        }
+
+        // 2. Character-data changes: the parent may be a name node
+        for (const node of batch.characterDataNodes) {
+            const parent = node.parentElement;
+            if (parent && parent.matches(NAME_SELECTORS.join(','))) {
+                if (syncElement(parent)) processed++;
+            }
+        }
+    } else {
+        // Full scan
+        for (const el of findNameElements()) {
+            if (syncElement(el)) processed++;
+        }
     }
 
-    if (processed > 0) {
-        logger.debug(`👑 Applied ${processed} crowns`);
-    }
+    return processed;
 }
 
-function removeAllCrowns(): void {
+function removeAllMarks(): void {
     const elements = findNameElements();
     let removed = 0;
     for (const el of elements) {
-        const e = el as HTMLElement;
-        if (e.dataset.kmodCrown !== 'true') continue;
+        const hadIcon = el.querySelector(`.${ICON_CLASS}`);
+        const wasMarked = el.dataset[MARK_ATTR] === 'true';
+        if (!hadIcon && !wasMarked) continue;
 
-        e.style.color = '';
-        e.style.fontWeight = '';
-        e.style.textShadow = '';
-        if (e.textContent) {
-            e.textContent = e.textContent
-                .replace(` ${CROWN_EMOJI}`, '')
-                .replace(CROWN_EMOJI, '');
-        }
-        delete e.dataset.kmodCrown;
+        el.querySelectorAll(`.${ICON_CLASS}`).forEach((n) => n.remove());
+        delete el.dataset[MARK_ATTR];
         removed++;
     }
     if (removed > 0) {
-        logger.debug(`👑 Removed ${removed} crowns`);
+        logger.debug(`✅ Removed ${removed} verification icons`);
     }
 }
 
@@ -128,24 +184,35 @@ function removeAllCrowns(): void {
 // PUBLIC API
 // ============================================================
 
-/** Full scan (idempotent). Called by registry on init, on toggles, and on DOM batches. */
-export function apply(): void {
-    processPage();
+/**
+ * Batch-aware: if a batch is provided, only process changed/added nodes.
+ * Otherwise fall back to a full scan (used on enable / manual apply).
+ */
+export function apply(batch?: ObserverBatch): void {
+    if (!storage.getBoolean('showCrown')) {
+        removeAllMarks();
+        return;
+    }
+
+    const processed = processBatch(batch);
+    if (processed > 0) {
+        logger.debug(`✅ Applied ${processed} verification icon(s)`);
+    }
 }
 
 export function enable(): void {
     if (isEnabled) return;
     isEnabled = true;
-    logger.info('👑 Crown enabled');
-    processPage();
+    logger.info('✅ Verification icon enabled');
+    apply();
 }
 
 export function disable(): void {
     if (!isEnabled) return;
     isEnabled = false;
-    removeAllCrowns();
+    removeAllMarks();
     betaCache.clear();
-    logger.info('👑 Crown disabled');
+    logger.info('✅ Verification icon disabled');
 }
 
 export function toggle(): boolean {
