@@ -1,12 +1,14 @@
 /*
 * @author: potemk.in
 * @brief: Marks beta tester names with the site's native verification mini icon.
-* @desc: Pure apply-based feature, batch-aware. Because Svelte may replace
-*       only the text inside an existing name node (or re-create the icon
-*       node during re-render), we:
-*         1) run on every batch (no selector filter in registry),
-*         2) process characterData nodes as well as added nodes,
-*         3) re-check icon presence even when dataset flag is set.
+* @desc: The icon must live INSIDE <span class="name svelte-1riu5uh">, as a
+*       sibling of <span class="text"> — that's exactly how MAX itself renders
+*       native verification badges, so vertical alignment and spacing come
+*       from the site's own flex layout, not from our styles.
+*
+*       Batch-aware: runs on every batch (no selector filter in registry),
+*       handles added nodes and characterData, and re-inserts the icon if
+*       Svelte re-renders the name node and drops our child.
 */
 
 import { logger } from '../../core/logger';
@@ -23,8 +25,15 @@ const MARK_ATTR = 'kmodCrown';
 const ICON_CLASS = 'kmod-verified';
 const MAX_BETA_CACHE = 200;
 
-const NAME_SELECTORS = [
-    OFFSETS.classes.name,
+/** Wrapper that also carries the native `.icon` sibling. */
+const NAME_WRAPPER_SELECTORS = [
+    'span.name.svelte-1riu5uh',
+    'span.name',
+];
+
+/** The element whose textContent is the actual nickname. */
+const NAME_TEXT_SELECTORS = [
+    OFFSETS.classes.name,          // 'span.text.svelte-1riu5uh'
     'span.text.svelte-1riu5uh',
     '.text.svelte-1riu5uh',
 ];
@@ -35,7 +44,6 @@ const NAME_SELECTORS = [
 
 let isEnabled = false;
 
-/** Cached lookups: trimmed lowercase name → is beta tester. */
 const betaCache = new Map<string, boolean>();
 
 // ============================================================
@@ -82,101 +90,145 @@ function createVerificationIcon(): HTMLElement {
 }
 
 // ============================================================
-// DOM PROCESSING
+// LOOKUP HELPERS
 // ============================================================
 
-function findNameElements(): HTMLElement[] {
-    for (const selector of NAME_SELECTORS) {
-        const elements = qsa<HTMLElement>(selector);
-        if (elements.length > 0) return elements;
+/** Given any element, find the wrapping <span class="name"> it belongs to. */
+function findNameWrapper(el: Element): HTMLElement | null {
+    // el may be the .name itself
+    for (const sel of NAME_WRAPPER_SELECTORS) {
+        try {
+            if (el.matches(sel)) return el as HTMLElement;
+        } catch { /* ignore */ }
     }
-    return [];
+    // or an ancestor of .text
+    for (const sel of NAME_WRAPPER_SELECTORS) {
+        try {
+            const wrapper = el.closest(sel);
+            if (wrapper) return wrapper as HTMLElement;
+        } catch { /* ignore */ }
+    }
+    return null;
 }
 
+/** Extract the nickname text from a .name wrapper. */
+function getNameText(nameWrapper: HTMLElement): string {
+    for (const sel of NAME_TEXT_SELECTORS) {
+        const textEl = nameWrapper.querySelector(sel);
+        if (textEl) {
+            // strip out any child icons just in case
+            return (textEl.textContent || '').trim();
+        }
+    }
+    return (nameWrapper.textContent || '').trim();
+}
+
+// ============================================================
+// SYNC ONE WRAPPER
+// ============================================================
+
 /**
- * Sync one name element with the desired state.
- * Returns true if we did something (add / re-add icon).
+ * Ensure <span class="name"> has our verification icon iff the name
+ * matches a beta tester. Returns true if DOM was changed.
  */
-function syncElement(element: HTMLElement): boolean {
-    const name = element.textContent?.trim() || '';
+function syncWrapper(nameWrapper: HTMLElement): boolean {
+    const name = getNameText(nameWrapper);
     if (!name) return false;
 
     const isBeta = isBetaTester(name);
-    const hasIcon = !!element.querySelector(`.${ICON_CLASS}`);
-    const marked = element.dataset[MARK_ATTR] === 'true';
+    const hasIcon = !!nameWrapper.querySelector(`.${ICON_CLASS}`);
+    const marked = nameWrapper.dataset[MARK_ATTR] === 'true';
 
-    // Not a beta tester → ensure no leftover icon / flag
     if (!isBeta) {
         if (hasIcon || marked) {
-            element.querySelectorAll(`.${ICON_CLASS}`).forEach((n) => n.remove());
-            delete element.dataset[MARK_ATTR];
+            nameWrapper.querySelectorAll(`.${ICON_CLASS}`).forEach((n) => n.remove());
+            delete nameWrapper.dataset[MARK_ATTR];
             return true;
         }
         return false;
     }
 
-    // Is a beta tester and icon is present → nothing to do
     if (hasIcon) {
-        if (!marked) element.dataset[MARK_ATTR] = 'true';
+        if (!marked) nameWrapper.dataset[MARK_ATTR] = 'true';
         return false;
     }
 
-    // Is a beta tester but icon is missing → (re)insert
-    element.appendChild(createVerificationIcon());
-    element.dataset[MARK_ATTR] = 'true';
+    // Append as sibling of .text inside .name — same position MAX uses
+    // for native verification badges. Flex layout of .name handles alignment.
+    nameWrapper.appendChild(createVerificationIcon());
+    nameWrapper.dataset[MARK_ATTR] = 'true';
     return true;
 }
 
+// ============================================================
+// BATCH PROCESSING
+// ============================================================
+
+const COMBINED_TEXT_SELECTOR = NAME_TEXT_SELECTORS.join(',');
+const COMBINED_WRAPPER_SELECTOR = NAME_WRAPPER_SELECTORS.join(',');
+
 function processBatch(batch?: ObserverBatch): number {
     let processed = 0;
+    const seen = new WeakSet<HTMLElement>();
+
+    const handleWrapper = (wrapper: HTMLElement): void => {
+        if (seen.has(wrapper)) return;
+        seen.add(wrapper);
+        if (syncWrapper(wrapper)) processed++;
+    };
 
     if (batch) {
-        // 1. Added nodes: check the node itself + its descendants
+        // 1) Added nodes
         for (const node of batch.addedNodes) {
-            if (node instanceof Element) {
-                if (node.matches(NAME_SELECTORS.join(','))) {
-                    if (syncElement(node as HTMLElement)) processed++;
-                }
-                const descendants = node.querySelectorAll<HTMLElement>(
-                    NAME_SELECTORS.join(',')
-                );
-                for (const el of descendants) {
-                    if (syncElement(el)) processed++;
-                }
-            }
+            if (!(node instanceof Element)) continue;
+
+            // The added node itself might be .text or .name
+            const wrapperFromSelf = findNameWrapper(node);
+            if (wrapperFromSelf) handleWrapper(wrapperFromSelf);
+
+            // Descendants that are .text / .name
+            node.querySelectorAll<HTMLElement>(COMBINED_TEXT_SELECTOR)
+                .forEach((el) => {
+                    const w = findNameWrapper(el);
+                    if (w) handleWrapper(w);
+                });
+            node.querySelectorAll<HTMLElement>(COMBINED_WRAPPER_SELECTOR)
+                .forEach(handleWrapper);
         }
 
-        // 2. Character-data changes: the parent may be a name node
+        // 2) Character data changes (Svelte updates text in place)
         for (const node of batch.characterDataNodes) {
             const parent = node.parentElement;
-            if (parent && parent.matches(NAME_SELECTORS.join(','))) {
-                if (syncElement(parent)) processed++;
-            }
+            if (!parent) continue;
+            if (!parent.matches(COMBINED_TEXT_SELECTOR)) continue;
+            const wrapper = findNameWrapper(parent);
+            if (wrapper) handleWrapper(wrapper);
         }
     } else {
         // Full scan
-        for (const el of findNameElements()) {
-            if (syncElement(el)) processed++;
+        for (const sel of NAME_WRAPPER_SELECTORS) {
+            const wrappers = qsa<HTMLElement>(sel);
+            for (const w of wrappers) handleWrapper(w);
         }
     }
 
     return processed;
 }
 
-function removeAllMarks(): void {
-    const elements = findNameElements();
-    let removed = 0;
-    for (const el of elements) {
-        const hadIcon = el.querySelector(`.${ICON_CLASS}`);
-        const wasMarked = el.dataset[MARK_ATTR] === 'true';
-        if (!hadIcon && !wasMarked) continue;
+// ============================================================
+// REMOVE
+// ============================================================
 
-        el.querySelectorAll(`.${ICON_CLASS}`).forEach((n) => n.remove());
-        delete el.dataset[MARK_ATTR];
-        removed++;
-    }
-    if (removed > 0) {
-        logger.debug(`✅ Removed ${removed} verification icons`);
+function removeAllMarks(): void {
+    for (const sel of NAME_WRAPPER_SELECTORS) {
+        const wrappers = qsa<HTMLElement>(sel);
+        for (const w of wrappers) {
+            const hadIcon = w.querySelector(`.${ICON_CLASS}`);
+            const wasMarked = w.dataset[MARK_ATTR] === 'true';
+            if (!hadIcon && !wasMarked) continue;
+            w.querySelectorAll(`.${ICON_CLASS}`).forEach((n) => n.remove());
+            delete w.dataset[MARK_ATTR];
+        }
     }
 }
 
@@ -184,10 +236,6 @@ function removeAllMarks(): void {
 // PUBLIC API
 // ============================================================
 
-/**
- * Batch-aware: if a batch is provided, only process changed/added nodes.
- * Otherwise fall back to a full scan (used on enable / manual apply).
- */
 export function apply(batch?: ObserverBatch): void {
     if (!storage.getBoolean('showCrown')) {
         removeAllMarks();
